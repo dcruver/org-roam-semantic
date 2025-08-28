@@ -569,7 +569,7 @@ wrap contents under a synthetic top-level heading using #+title or filename."
              (buffer-file-name)
              (org-roam-file-p)
              (not (string-match-p "/daily/" (buffer-file-name))))
-    (my/generate-embedding-for-note (buffer-file-name))))
+    (my/generate-embedding-for-note (buffer-file-name)))))
 
 ;; Add the hook
 (add-hook 'after-save-hook 'my/maybe-update-embedding)
