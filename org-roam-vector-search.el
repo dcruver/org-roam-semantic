@@ -564,14 +564,12 @@ wrap contents under a synthetic top-level heading using #+title or filename."
 
 ;;; Auto-embedding hook
 (after! org-roam-vector-search
-  (defun my/maybe-update-embedding ()
-    "Update embedding for current note if it's an org-roam file."
-    (when (and (derived-mode-p 'org-mode)
-               (buffer-file-name)
-               (org-roam-file-p)
-               ;; Skip daily notes entirely
-               (not (string-match-p "/daily/" (buffer-file-name))))
-      (my/generate-embedding-for-note (buffer-file-name)))))
+  (defun my/maybe-update-embedding-on-save ()
+  (when (and (derived-mode-p 'org-mode)
+             (buffer-file-name)
+             (org-roam-file-p)
+             (not (string-match-p "/daily/" (buffer-file-name))))
+    (my/generate-embedding-for-note (buffer-file-name))))
 
 ;; Add the hook
 (add-hook 'after-save-hook 'my/maybe-update-embedding)
