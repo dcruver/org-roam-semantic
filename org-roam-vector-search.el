@@ -218,7 +218,7 @@ Does NOT call `save-buffer` (so it is safe in save hooks)."
           (org-entry-put (point) "EMBEDDING"
                          (mapconcat (lambda (x) (format "%.6f" x)) embedding " ")))
       ;; IMPORTANT: do NOT call (save-buffer) here
-      )))
+      ))))
 
 (defun my/get-embedding-from-note (file)
   "Retrieve embedding vector from note's properties."
