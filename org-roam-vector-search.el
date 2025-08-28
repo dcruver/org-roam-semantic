@@ -571,8 +571,7 @@ wrap contents under a synthetic top-level heading using #+title or filename."
                (org-roam-file-p)
                ;; Skip daily notes entirely
                (not (string-match-p "/daily/" (buffer-file-name))))
-      (unless (my/note-has-embedding-p (buffer-file-name))
-        (my/generate-embedding-for-note (buffer-file-name))))))
+      (my/generate-embedding-for-note (buffer-file-name)))))
 
 ;; Add the hook
 (add-hook 'after-save-hook 'my/maybe-update-embedding)
