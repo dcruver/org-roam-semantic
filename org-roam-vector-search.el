@@ -203,36 +203,22 @@ This is a non-interactive version of my/find-similar-notes for use by other func
        nil))))
 
 ;;; Embedding Storage and Retrieval
-
 (defun my/store-embedding-in-note (file embedding)
-  "Store embedding vector in the note's properties."
+  "Store EMBEDDING vector in FILE's **file-level** PROPERTIES drawer.
+Does NOT call `save-buffer` (so it is safe in save hooks)."
   (when embedding
     (with-current-buffer (find-file-noselect file)
+      (require 'org)
       (save-excursion
-        (goto-char (point-min))
-        ;; Find or create properties drawer
-        (unless (re-search-forward "^[ \t]*:PROPERTIES:" nil t)
-          ;; If no properties drawer exists, create one after the title
+        (org-with-wide-buffer
           (goto-char (point-min))
-          (when (re-search-forward "^#\\+title:" nil t)
-            (end-of-line)
-            (insert "\n:PROPERTIES:\n:END:")))
-        ;; Find the properties drawer
-        (goto-char (point-min))
-        (when (re-search-forward "^[ \t]*:PROPERTIES:" nil t)
-          (let ((props-start (point))
-                (props-end (when (re-search-forward "^[ \t]*:END:" nil t)
-                            (match-beginning 0))))
-            (when props-end
-              ;; Remove existing embedding property if it exists
-              (goto-char props-start)
-              (when (re-search-forward "^[ \t]*:EMBEDDING:.*$" props-end t)
-                (delete-region (match-beginning 0) (1+ (match-end 0))))
-              ;; Add new embedding property
-              (goto-char props-end)
-              (insert (format ":EMBEDDING: %s\n"
-                            (mapconcat 'number-to-string embedding " "))))))
-        (save-buffer)))))
+          ;; Ensure a file-level property drawer exists
+          (unless (org-get-property-block) (org-insert-property-drawer))
+          ;; Replace the property value at the file level
+          (org-entry-put (point) "EMBEDDING"
+                         (mapconcat (lambda (x) (format "%.6f" x)) embedding " ")))
+      ;; IMPORTANT: do NOT call (save-buffer) here
+      )))
 
 (defun my/get-embedding-from-note (file)
   "Retrieve embedding vector from note's properties."
@@ -565,14 +551,14 @@ wrap contents under a synthetic top-level heading using #+title or filename."
 ;;; Auto-embedding hook
 (after! org-roam-vector-search
   (defun my/update-embedding-on-save ()
-  (when (and (derived-mode-p 'org-mode)
-             (buffer-file-name)
-             (org-roam-file-p)
-             (not (string-match-p "/daily/" (buffer-file-name))))
-    (my/generate-embedding-for-note (buffer-file-name)))))
+    (when (and (derived-mode-p 'org-mode)
+               (buffer-file-name)
+               (org-roam-file-p)
+               (not (string-match-p "/daily/" (buffer-file-name))))
+      (my/generate-embedding-for-note (buffer-file-name)))))
 
 ;; Add the hook
-(add-hook 'after-save-hook 'my/update-embedding-on-save)
+(add-hook 'before-save-hook 'my/update-embedding-on-save)
 
 ;;; Key Bindings for Vector Search
 
