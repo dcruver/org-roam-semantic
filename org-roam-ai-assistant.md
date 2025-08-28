@@ -17,11 +17,10 @@ This package provides intelligent AI assistance for your org-roam knowledge base
 1. **org-roam-vector-search** package installed and configured:
 
 ```elisp
-(use-package org-roam-vector-search
-  :straight (:host github :repo "dcruver/org-roam-semantic")
-  :after org-roam
-  :config
-  (setq my/ollama-base-url "http://localhost:11434"))
+(straight-use-package 
+  '(org-roam-semantic :host github :repo "dcruver/org-roam-semantic"))
+(require 'org-roam-vector-search)
+(setq my/ollama-base-url "http://localhost:11434")
 ```
 
 2. **Ollama** with both embedding and text generation models:
@@ -35,6 +34,29 @@ ollama pull llama3.1:8b         # For text generation
 ## Installation
 
 ### Via Straight.el (Recommended)
+
+```elisp
+;; First install org-roam-vector-search (required dependency)
+(straight-use-package 
+  '(org-roam-semantic :host github :repo "dcruver/org-roam-semantic"))
+
+;; Load both modules
+(require 'org-roam-vector-search)
+(require 'org-roam-ai-assistant)
+
+;; Configure
+(setq my/ollama-base-url "http://localhost:11434")
+
+;; Set up AI assistant keybindings
+(global-set-key (kbd "C-c a f") 'my/ai-flesh-out-with-vector-context)
+(global-set-key (kbd "C-c a e") 'my/ai-quick-explain)
+(global-set-key (kbd "C-c a p") 'my/ai-improve-paragraph)
+(global-set-key (kbd "C-c a s") 'my/ai-suggest-connections)
+(global-set-key (kbd "C-c a g") 'my/ai-find-knowledge-gaps)
+(global-set-key (kbd "C-c a h") 'my/ai-homelab-advisor)
+```
+
+### Via use-package (If you have straight.el integration)
 
 ```elisp
 (use-package org-roam-ai-assistant

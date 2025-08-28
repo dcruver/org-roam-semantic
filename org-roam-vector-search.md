@@ -27,6 +27,25 @@ ollama pull nomic-embed-text
 ### Via Straight.el (Recommended)
 
 ```elisp
+;; Install the package
+(straight-use-package 
+  '(org-roam-semantic :host github :repo "dcruver/org-roam-semantic"))
+
+;; Load the vector search module
+(require 'org-roam-vector-search)
+
+;; Configure
+(setq my/ollama-base-url "http://localhost:11434")
+
+;; Set up keybindings
+(global-set-key (kbd "C-c v s") 'my/search-notes-by-concept)
+(global-set-key (kbd "C-c v i") 'my/insert-similar-notes)
+(global-set-key (kbd "C-c v r") 'my/insert-related-notes)
+```
+
+### Via use-package (If you have straight.el integration)
+
+```elisp
 (use-package org-roam-vector-search
   :straight (:host github :repo "dcruver/org-roam-semantic")
   :after org-roam
