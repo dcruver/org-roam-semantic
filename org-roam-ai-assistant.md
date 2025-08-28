@@ -9,7 +9,6 @@ This package provides intelligent AI assistance for your org-roam knowledge base
 - **Context-aware AI enhancement** - Uses similar notes to inform AI responses
 - **Multiple AI workflows** - Note expansion, concept explanation, paragraph improvement
 - **Knowledge analysis** - Find gaps, suggest connections, identify improvements
-- **Homelab-focused advice** - Specialized prompts for technical infrastructure topics
 - **Smart integration** - Automatically updates embeddings after AI modifications
 
 ## Prerequisites
@@ -53,7 +52,6 @@ ollama pull llama3.1:8b         # For text generation
 (global-set-key (kbd "C-c a p") 'my/ai-improve-paragraph)
 (global-set-key (kbd "C-c a s") 'my/ai-suggest-connections)
 (global-set-key (kbd "C-c a g") 'my/ai-find-knowledge-gaps)
-(global-set-key (kbd "C-c a h") 'my/ai-homelab-advisor)
 ```
 
 ### Via use-package (If you have straight.el integration)
@@ -66,8 +64,7 @@ ollama pull llama3.1:8b         # For text generation
          ("C-c a e" . my/ai-quick-explain)
          ("C-c a p" . my/ai-improve-paragraph)
          ("C-c a s" . my/ai-suggest-connections)
-         ("C-c a g" . my/ai-find-knowledge-gaps)
-         ("C-c a h" . my/ai-homelab-advisor)))
+         ("C-c a g" . my/ai-find-knowledge-gaps)))
 ```
 
 ### Manual Installation
@@ -139,15 +136,6 @@ Analyze the current note and suggest which related notes would be most valuable 
 
 Identify missing topics, techniques, or concepts that would complement your current knowledge. Suggests specific areas to explore based on your existing notes and the current topic.
 
-#### `my/ai-homelab-advisor`
-**Keybinding:** `C-c a h`
-
-Get specialized advice for homelab and infrastructure scenarios. Provides:
-- Best practices for your specific situation
-- Common pitfalls to avoid  
-- Recommended tools and approaches
-- Security and performance considerations
-
 ### System Functions
 
 #### `my/ai-system-status`
@@ -168,7 +156,6 @@ The following key bindings are configured automatically:
 - `C-c a p` - Improve current paragraph
 - `C-c a s` - Suggest note connections
 - `C-c a g` - Find knowledge gaps  
-- `C-c a h` - Get homelab advisor
 - `C-c a ?` - Check system status
 
 ## Workflow

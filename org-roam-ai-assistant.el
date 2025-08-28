@@ -1,5 +1,6 @@
 ;;; org-roam-ai-assistant.el --- AI assistance for org-roam using vector context -*- lexical-binding: t; -*-
-
+;;; Version: 1.0.0
+;;;
 ;;; Commentary:
 ;; This package provides AI-powered assistance for org-roam notes, leveraging
 ;; the vector embedding system from org-roam-vector-search.el to provide
@@ -325,44 +326,6 @@ What important topics, techniques, or concepts are missing that would complement
             (with-output-to-temp-buffer "*Knowledge Gaps Analysis*"
               (princ (format "Knowledge gaps analysis for: %s\n\n%s" title gaps)))
           (message "Failed to analyze knowledge gaps"))))))
-
-(defun my/ai-homelab-advisor ()
-  "Get specific homelab advice based on current note context."
-  (interactive)
-  (if (not (org-roam-file-p))
-      (message "This function only works in org-roam files")
-    (let* ((context (my/ai-get-note-context))
-           (title (alist-get 'title context))
-           (domain (alist-get 'domain context))
-           (content (alist-get 'content context))
-           (similar-notes (my/ai-get-similar-notes-context title 3))
-           (infrastructure-context (mapconcat
-                                   (lambda (note)
-                                     (format "%s" (car note)))
-                                   similar-notes ", "))
-           (prompt (format "As a homelab expert, provide specific advice for this situation:
-
-Current focus: %s
-Domain: %s
-Context: %s
-
-Related infrastructure: %s
-
-Provide practical, actionable advice including:
-1. Best practices for this specific scenario
-2. Common pitfalls to avoid
-3. Recommended tools or approaches
-4. Security considerations if applicable
-5. Performance optimization tips
-
-Focus on real-world homelab experience and practical implementation."
-                          title domain content infrastructure-context)))
-
-      (let ((advice (my/ai-call-ollama-generate prompt)))
-        (if advice
-            (with-output-to-temp-buffer "*Homelab Advisor*"
-              (princ (format "Homelab advice for: %s\n\n%s" title advice)))
-          (message "Failed to get homelab advice"))))))
 
 ;;; System Status and Debugging
 

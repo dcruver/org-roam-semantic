@@ -17,7 +17,6 @@ Transform your org-roam knowledge base with semantic similarity search and conte
 - **Intelligent enhancement** using related notes as context
 - **Multiple workflows** - explain concepts, improve writing, suggest connections
 - **Knowledge analysis** - find gaps, identify improvements
-- **Homelab-focused** advice and technical guidance
 - **Smart integration** with your existing knowledge graph
 
 ## 🚀 Quick Start
@@ -58,7 +57,6 @@ ollama pull llama3.1:8b         # For AI text generation
 (global-set-key (kbd "C-c a p") 'my/ai-improve-paragraph)
 (global-set-key (kbd "C-c a s") 'my/ai-suggest-connections)
 (global-set-key (kbd "C-c a g") 'my/ai-find-knowledge-gaps)
-(global-set-key (kbd "C-c a h") 'my/ai-homelab-advisor)
 ```
 
 #### Via use-package (If you have straight.el integration configured)
@@ -79,8 +77,7 @@ ollama pull llama3.1:8b         # For AI text generation
          ("C-c a e" . my/ai-quick-explain)
          ("C-c a p" . my/ai-improve-paragraph)
          ("C-c a s" . my/ai-suggest-connections)
-         ("C-c a g" . my/ai-find-knowledge-gaps)
-         ("C-c a h" . my/ai-homelab-advisor)))
+         ("C-c a g" . my/ai-find-knowledge-gaps)))
 ```
 
 #### Manual Installation
@@ -126,13 +123,13 @@ The AI assistant uses semantic search to find related notes, then includes that 
 
 ### Example Workflow
 ```
-1. You have notes about "Docker," "Nginx," and "SSL certificates"
-2. You create a new note: "Setting up reverse proxy"  
+1. You have notes about "Machine Learning," "Python," and "Data Analysis"
+2. You create a new note: "Neural Network Implementation"  
 3. Semantic search finds your related notes automatically
 4. AI assistant uses that context to suggest:
-   - Specific nginx configurations you've used
-   - SSL setup steps from your certificates note
-   - Docker networking approaches from your container notes
+   - Specific Python libraries you've documented
+   - Data preprocessing steps from your analysis notes
+   - ML concepts and techniques from your learning notes
 ```
 
 ## 🎯 Key Bindings
@@ -148,7 +145,6 @@ The AI assistant uses semantic search to find related notes, then includes that 
 - `C-c a p` - Improve current paragraph
 - `C-c a s` - Suggest note connections
 - `C-c a g` - Find knowledge gaps
-- `C-c a h` - Get homelab advisor
 - `C-c a ?` - Check system status
 
 ## 📚 Documentation

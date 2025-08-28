@@ -1,5 +1,6 @@
 ;;; org-roam-vector-search.el --- Vector embeddings and AI assistance for org-roam -*- lexical-binding: t; -*-
-
+;;; Version: 1.0.0
+;;;
 ;;; Commentary:
 ;; This package adds vector embedding support and direct AI integration to org-roam.
 ;; It stores embeddings as org properties and provides semantic similarity search.
@@ -12,6 +13,16 @@
 (require 'url)
 (require 'org)
 (require 'ox-md)
+
+;;; Version
+
+(defconst org-roam-semantic-version "1.0.0"
+  "Version of the org-roam-semantic package suite.")
+
+(defun org-roam-semantic-version ()
+  "Display the version of org-roam-semantic."
+  (interactive)
+  (message "org-roam-semantic version %s" org-roam-semantic-version))
 
 ;;; Configuration
 
