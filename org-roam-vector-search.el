@@ -564,7 +564,7 @@ wrap contents under a synthetic top-level heading using #+title or filename."
 
 ;;; Auto-embedding hook
 (after! org-roam-vector-search
-  (defun my/maybe-update-embedding-on-save ()
+  (defun my/update-embedding-on-save ()
   (when (and (derived-mode-p 'org-mode)
              (buffer-file-name)
              (org-roam-file-p)
@@ -572,7 +572,7 @@ wrap contents under a synthetic top-level heading using #+title or filename."
     (my/generate-embedding-for-note (buffer-file-name)))))
 
 ;; Add the hook
-(add-hook 'after-save-hook 'my/maybe-update-embedding)
+(add-hook 'after-save-hook 'my/update-embedding-on-save)
 
 ;;; Key Bindings for Vector Search
 
