@@ -561,8 +561,7 @@ wrap contents under a synthetic top-level heading using #+title or filename."
   (defun org-roam-semantic--update-on-save ()
     (when (and (derived-mode-p 'org-mode)
                (buffer-file-name)
-               (org-roam-file-p)
-               (not (string-match-p "/daily/" (buffer-file-name))))
+               (org-roam-file-p))
       (org-roam-semantic-generate-embedding (buffer-file-name)))))
 
 ;; Add the hook
