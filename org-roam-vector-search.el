@@ -1,5 +1,5 @@
 ;;; org-roam-vector-search.el --- Vector embeddings and AI assistance for org-roam -*- lexical-binding: t; -*-
-;;; Version: 1.0.0
+;;; Version: 1.1.0
 ;;;
 ;;; Commentary:
 ;; This package adds vector embedding support and direct AI integration to org-roam.
@@ -16,7 +16,7 @@
 
 ;;; Version
 
-(defconst org-roam-semantic-version "1.0.0"
+(defconst org-roam-semantic-version "1.1.0"
   "Version of the org-roam-semantic package suite.")
 
 (defun org-roam-semantic-version ()
@@ -29,9 +29,9 @@
 (defgroup org-roam-vector-search nil
   "Vector embeddings and semantic search for org-roam."
   :group 'org-roam
-  :prefix "my/")
+  :prefix "org-roam-semantic-")
 
-(defcustom my/ollama-base-url "http://localhost:11434"
+(defcustom org-roam-semantic-ollama-url "http://localhost:11434"
   "Base URL for Ollama API server.
 This should point to your Ollama installation. Common values:
 - http://localhost:11434 (local installation)
@@ -39,7 +39,7 @@ This should point to your Ollama installation. Common values:
   :type 'string
   :group 'org-roam-vector-search)
 
-(defcustom my/embedding-model "nomic-embed-text"
+(defcustom org-roam-semantic-embedding-model "nomic-embed-text"
   "Model to use for generating embeddings.
 Must be available in your Ollama installation.
 Recommended models:
@@ -49,7 +49,7 @@ Recommended models:
   :type 'string
   :group 'org-roam-vector-search)
 
-(defcustom my/generation-model "llama3.1:8b"
+(defcustom org-roam-semantic-generation-model "llama3.1:8b"
   "Model to use for text generation and AI assistance.
 Must be available in your Ollama installation.
 Popular models:
@@ -59,7 +59,7 @@ Popular models:
   :type 'string
   :group 'org-roam-vector-search)
 
-(defcustom my/embedding-dimensions 768
+(defcustom org-roam-semantic-embedding-dimensions 768
   "Number of dimensions in the embedding vectors.
 This should match your embedding model:
 - nomic-embed-text: 768
@@ -71,20 +71,20 @@ Change this only if you switch embedding models."
 
 ;;; Utility Functions
 
-(defun my/get-similar-notes-data (query-text &optional limit)
+(defun org-roam-semantic-get-similar-data (query-text &optional limit)
   "Get similarity data programmatically (returns list of (file similarity) pairs).
-This is a non-interactive version of my/find-similar-notes for use by other functions."
+This is a non-interactive version of org-roam-semantic-find-similar for use by other functions."
   (let ((limit (or limit 10))
         (similarities '()))
     ;; Generate embedding for query
-    (let ((query-embedding (my/call-ollama-embeddings-sync query-text)))
+    (let ((query-embedding (org-roam-ai-generate-embedding query-text)))
       (if query-embedding
           (progn
             ;; Compare with all notes that have embeddings
             (dolist (file (org-roam-list-files))
-              (let ((note-embedding (my/get-embedding-from-note file)))
+              (let ((note-embedding (org-roam-semantic--get-embedding file)))
                 (when note-embedding
-                  (let ((similarity (my/cosine-similarity query-embedding note-embedding)))
+                  (let ((similarity (org-roam-semantic--cosine-similarity query-embedding note-embedding)))
                     (when similarity
                       (push (list file similarity) similarities))))))
             ;; Sort by similarity and take top results
@@ -95,13 +95,13 @@ This is a non-interactive version of my/find-similar-notes for use by other func
         (message "Failed to generate embedding for query")
         nil))))
 
-(defun my/normalize-text (text)
+(defun org-roam-semantic--normalize-text (text)
   "Normalize text for embedding by removing extra whitespace and formatting."
   (when text
     (let ((normalized (replace-regexp-in-string "[ \t\n\r]+" " " text)))
       (string-trim normalized))))
 
-(defun my/get-note-content (file)
+(defun org-roam-semantic--get-content (file)
   "Extract the main content of an org-roam note, excluding properties and metadata."
   (with-temp-buffer
     (insert-file-contents file)
@@ -112,13 +112,13 @@ This is a non-interactive version of my/find-similar-notes for use by other func
       (forward-line 1))
     ;; Get content from here to end of buffer
     (let ((content (buffer-substring (point) (point-max))))
-      (my/normalize-text content))))
+      (org-roam-semantic--normalize-text content))))
 
-(defun my/vector-magnitude (vector)
+(defun org-roam-semantic--vector-magnitude (vector)
   "Calculate the magnitude of a vector."
   (sqrt (apply '+ (mapcar (lambda (x) (* x x)) vector))))
 
-(defun my/cosine-similarity (vec1 vec2)
+(defun org-roam-semantic--cosine-similarity (vec1 vec2)
   "Calculate cosine similarity between two vectors."
   (condition-case err
       (when (and vec1 vec2
@@ -151,15 +151,15 @@ This is a non-interactive version of my/find-similar-notes for use by other func
 
 ;;; Ollama API Functions
 
-(defun my/call-ollama-embeddings-sync (text)
+(defun org-roam-ai-generate-embedding (text)
   "Call Ollama embeddings API synchronously using built-in URL functions."
   (let ((url-request-method "POST")
         (url-request-extra-headers '(("Content-Type" . "application/json")))
         (url-request-data (encode-coding-string
-                           (json-encode `((model . ,my/embedding-model)
+                           (json-encode `((model . ,org-roam-semantic-embedding-model)
                                         (prompt . ,text)))
                            'utf-8))
-        (url (concat my/ollama-base-url "/api/embeddings")))
+        (url (concat org-roam-semantic-ollama-url "/api/embeddings")))
     (condition-case err
         (with-current-buffer (url-retrieve-synchronously url)
           (goto-char (point-min))
@@ -177,17 +177,17 @@ This is a non-interactive version of my/find-similar-notes for use by other func
        (message "Error calling Ollama embeddings: %s" err)
        nil))))
 
-(defun my/call-ollama-generate-sync (prompt &optional system-prompt)
+(defun org-roam-ai-generate-text (prompt &optional system-prompt)
   "Call Ollama generate API synchronously using built-in URL functions."
   (let ((url-request-method "POST")
         (url-request-extra-headers '(("Content-Type" . "application/json")))
         (url-request-data (encode-coding-string
-                           (json-encode `((model . ,my/generation-model)
+                           (json-encode `((model . ,org-roam-semantic-generation-model)
                                         (prompt . ,prompt)
                                         (system . ,(or system-prompt ""))
                                         (stream . nil)))
                            'utf-8))
-        (url (concat my/ollama-base-url "/api/generate")))
+        (url (concat org-roam-semantic-ollama-url "/api/generate")))
     (condition-case err
         (with-current-buffer (url-retrieve-synchronously url)
           (goto-char (point-min))
@@ -203,7 +203,7 @@ This is a non-interactive version of my/find-similar-notes for use by other func
        nil))))
 
 ;;; Embedding Storage and Retrieval
-(defun my/store-embedding-in-note (file embedding)
+(defun org-roam-semantic--store-embedding (file embedding)
   "Store EMBEDDING vector in FILE's **file-level** PROPERTIES drawer.
 Does NOT call `save-buffer` (so it is safe in save hooks)."
   (when embedding
@@ -220,7 +220,7 @@ Does NOT call `save-buffer` (so it is safe in save hooks)."
       ;; IMPORTANT: do NOT call (save-buffer) here
       ))))
 
-(defun my/get-embedding-from-note (file)
+(defun org-roam-semantic--get-embedding (file)
   "Retrieve embedding vector from note's properties."
   (with-temp-buffer
     (insert-file-contents file)
@@ -235,36 +235,38 @@ Does NOT call `save-buffer` (so it is safe in save hooks)."
              (message "Error parsing embedding in %s: %s" (file-name-nondirectory file) err)
              nil)))))))
 
-(defun my/note-has-embedding-p (file)
+(defun org-roam-semantic--has-embedding-p (file)
   "Check if note already has an embedding."
-  (not (null (my/get-embedding-from-note file))))
+  (not (null (org-roam-semantic--get-embedding file))))
 
 ;;; Main Embedding Functions
 
-(defun my/generate-embedding (text)
+(defun org-roam-semantic--generate-embedding (text)
   "Generate embedding for text synchronously."
-  (my/call-ollama-embeddings-sync text))
+  (org-roam-ai-generate-embedding text))
 
-(defun my/generate-embedding-for-note (file)
+;;;###autoload
+(defun org-roam-semantic-generate-embedding (file)
   "Generate and store embedding for a single note."
   (interactive (list (buffer-file-name)))
   (unless file
     (error "No file associated with current buffer"))
-  (let ((content (my/get-note-content file)))
+  (let ((content (org-roam-semantic--get-content file)))
     (if content
         (progn
           (message "Generating embedding for %s..." (file-name-nondirectory file))
-          (let ((embedding (my/call-ollama-embeddings-sync content)))
+          (let ((embedding (org-roam-ai-generate-embedding content)))
             (if embedding
                 (progn
-                  (my/store-embedding-in-note file embedding)
+                  (org-roam-semantic--store-embedding file embedding)
                   (message "Embedding generated and stored for %s"
                          (file-name-nondirectory file)))
               (message "Failed to generate embedding for %s"
                      (file-name-nondirectory file)))))
       (message "No content found in %s" (file-name-nondirectory file)))))
 
-(defun my/generate-embeddings-for-all-notes ()
+;;;###autoload
+(defun org-roam-semantic-generate-all-embeddings ()
   "Generate embeddings for all org-roam notes that don't have them."
   (interactive)
   (let* ((files (org-roam-list-files))
@@ -273,20 +275,20 @@ Does NOT call `save-buffer` (so it is safe in save hooks)."
          (skipped 0))
     (message "Starting embedding generation for %d notes..." total)
     (dolist (file files)
-      (if (my/note-has-embedding-p file)
+      (if (org-roam-semantic--has-embedding-p file)
           (progn
             (cl-incf skipped)
             (message "Skipping %s (already has embedding) [%d/%d]"
                    (file-name-nondirectory file) (+ processed skipped) total))
-        (let ((content (my/get-note-content file)))
+        (let ((content (org-roam-semantic--get-content file)))
           (if content
               (progn
                 (cl-incf processed)
                 (message "Processing %s [%d/%d]..."
                        (file-name-nondirectory file) (+ processed skipped) total)
-                (let ((embedding (my/call-ollama-embeddings-sync content)))
+                (let ((embedding (org-roam-ai-generate-embedding content)))
                   (if embedding
-                      (my/store-embedding-in-note file embedding)
+                      (org-roam-semantic--store-embedding file embedding)
                     (message "Failed to generate embedding for %s"
                            (file-name-nondirectory file)))))
             (cl-incf skipped)
@@ -297,7 +299,7 @@ Does NOT call `save-buffer` (so it is safe in save hooks)."
 
 ;;; Vector Search Functions
 
-(defun my/get-note-title-from-file (file)
+(defun org-roam-semantic--get-title (file)
   "Extract the title from an org-roam note file."
   (condition-case nil
       (with-temp-buffer
@@ -308,7 +310,7 @@ Does NOT call `save-buffer` (so it is safe in save hooks)."
           (file-name-sans-extension (file-name-nondirectory file))))
     (error (file-name-sans-extension (file-name-nondirectory file)))))
 
-(defun my/get-node-id-from-file (file)
+(defun org-roam-semantic--get-node-id (file)
   "Extract the node ID from an org-roam note file."
   (condition-case nil
       (with-temp-buffer
@@ -318,10 +320,11 @@ Does NOT call `save-buffer` (so it is safe in save hooks)."
           (string-trim (match-string 1))))
     (error nil)))
 
-(defun my/find-similar-notes (query-text &optional limit)
+;;;###autoload
+(defun org-roam-semantic-find-similar (query-text &optional limit)
   "Find notes similar to the query text and display in a results buffer with clickable links."
   (interactive "sSearch for concept: ")
-  (let ((similarities (my/get-similar-notes-data query-text (or limit 10))))
+  (let ((similarities (org-roam-semantic-get-similar-data query-text (or limit 10))))
     (if similarities
         (with-current-buffer (get-buffer-create "*Similar Notes*")
           (erase-buffer)
@@ -332,8 +335,8 @@ Does NOT call `save-buffer` (so it is safe in save hooks)."
           (dolist (result similarities)
             (let* ((file (car result))
                    (similarity (cadr result))
-                   (title (my/get-note-title-from-file file))
-                   (node-id (my/get-node-id-from-file file)))
+                   (title (org-roam-semantic--get-title file))
+                   (node-id (org-roam-semantic--get-node-id file)))
               ;; Insert clickable file link and copyable org-roam link
               (insert (format "** %.3f - [[file:%s][%s]]\n" similarity file title))
               (when node-id
@@ -350,20 +353,20 @@ Does NOT call `save-buffer` (so it is safe in save hooks)."
           (message "Found %d similar notes - click links to open" (length similarities)))
       (message "No similar notes found"))))
 
-(defun my/find-similar-notes-and-insert (query-text &optional limit)
+(defun org-roam-semantic-find-and-insert (query-text &optional limit)
   "Find similar notes and insert org-roam links into the current buffer."
   (interactive "sSearch for concept: ")
   (if (not (derived-mode-p 'org-mode))
       (message "This function only works in org-mode buffers")
-    (let ((similarities (my/get-similar-notes-data query-text (or limit 5))))
+    (let ((similarities (org-roam-semantic-get-similar-data query-text (or limit 5))))
       (if similarities
           (progn
             (insert (format "\n** Related Notes - %s\n" query-text))
             (dolist (result similarities)
               (let* ((file (car result))
                      (similarity (cadr result))
-                     (title (my/get-note-title-from-file file))
-                     (node-id (my/get-node-id-from-file file)))
+                     (title (org-roam-semantic--get-title file))
+                     (node-id (org-roam-semantic--get-node-id file)))
                 (if node-id
                     (insert (format "- [[id:%s][%s]] (%.3f)\n" node-id title similarity))
                   (insert (format "- [[file:%s][%s]] (%.3f)\n" file title similarity)))))
@@ -371,17 +374,20 @@ Does NOT call `save-buffer` (so it is safe in save hooks)."
             (message "Inserted %d similar note links" (length similarities)))
         (message "No similar notes found")))))
 
-(defun my/search-notes-by-concept (concept)
+;;;###autoload
+(defun org-roam-semantic-search (concept)
   "Interactive search for notes by concept - displays results buffer."
   (interactive "sConcept to search for: ")
-  (my/find-similar-notes concept))
+  (org-roam-semantic-find-similar concept))
 
-(defun my/insert-related-notes (concept)
+;;;###autoload
+(defun org-roam-semantic-insert-related (concept)
   "Search for related notes and insert links at point."
   (interactive "sConcept to find related notes for: ")
-  (my/find-similar-notes-and-insert concept))
+  (org-roam-semantic-find-and-insert concept))
 
-(defun my/insert-similar-notes (&optional limit)
+;;;###autoload
+(defun org-roam-semantic-insert-similar (&optional limit)
   "Find notes similar to current note and insert org-roam links at point."
   (interactive "P")
   (if (not (and (derived-mode-p 'org-mode) (org-roam-file-p)))
@@ -389,10 +395,10 @@ Does NOT call `save-buffer` (so it is safe in save hooks)."
     (let* ((current-file (buffer-file-name))
            (title (or (org-roam-get-keyword "TITLE")
                      (file-name-sans-extension (file-name-nondirectory current-file))))
-           (content (my/get-note-content current-file))
+           (content (org-roam-semantic--get-content current-file))
            (query-text (or content title))
            (limit (or limit 5))
-           (similarities (my/get-similar-notes-data query-text (1+ limit)))) ; Get one extra to exclude current note
+           (similarities (org-roam-semantic-get-similar-data query-text (1+ limit)))) ; Get one extra to exclude current note
 
       ;; Filter out the current note from results
       (setq similarities (seq-remove (lambda (result)
@@ -407,8 +413,8 @@ Does NOT call `save-buffer` (so it is safe in save hooks)."
             (dolist (result similarities)
               (let* ((file (car result))
                      (similarity (cadr result))
-                     (title (my/get-note-title-from-file file))
-                     (node-id (my/get-node-id-from-file file)))
+                     (title (org-roam-semantic--get-title file))
+                     (node-id (org-roam-semantic--get-node-id file)))
                 (if node-id
                     (insert (format "- [[id:%s][%s]] (%.3f)\n" node-id title similarity))
                   (insert (format "- [[file:%s][%s]] (%.3f)\n" file title similarity)))))
@@ -418,11 +424,12 @@ Does NOT call `save-buffer` (so it is safe in save hooks)."
 
 ;;; Status and Maintenance Functions
 
-(defun my/debug-embedding (file)
+;;;###autoload
+(defun org-roam-semantic-debug-embedding (file)
   "Debug embedding for a specific file."
   (interactive (list (read-file-name "Check embedding for file: "
                                      org-roam-directory nil t)))
-  (let ((embedding (my/get-embedding-from-note file)))
+  (let ((embedding (org-roam-semantic--get-embedding file)))
     (if embedding
         (message "File: %s\nEmbedding: %d dimensions\nFirst few values: %s"
                  (file-name-nondirectory file)
@@ -432,7 +439,8 @@ Does NOT call `save-buffer` (so it is safe in save hooks)."
                                  (nth 3 embedding) (nth 4 embedding)) ", "))
       (message "File: %s has no embedding" (file-name-nondirectory file)))))
 
-(defun my/vector-search-status ()
+;;;###autoload
+(defun org-roam-semantic-status ()
   "Show status of vector embeddings in the knowledge base."
   (interactive)
   (let* ((all-files (org-roam-list-files))
@@ -441,7 +449,7 @@ Does NOT call `save-buffer` (so it is safe in save hooks)."
          (notes-without-embeddings '())
          (embedding-sizes '()))
     (dolist (file all-files)
-      (let ((embedding (my/get-embedding-from-note file)))
+      (let ((embedding (org-roam-semantic--get-embedding file)))
         (if embedding
             (progn
               (cl-incf notes-with-embeddings)
@@ -470,7 +478,7 @@ Does NOT call `save-buffer` (so it is safe in save hooks)."
 (require 'org)
 (require 'ox-md)
 
-(defun my/org--md-wrap-if-needed ()
+(defun org-roam-semantic--org-md-wrap-if-needed ()
   "If buffer has no headlines or starts with a :PROPERTIES: drawer,
 wrap contents under a synthetic top-level heading using #+title or filename."
   (save-excursion
@@ -484,7 +492,7 @@ wrap contents under a synthetic top-level heading using #+title or filename."
           (erase-buffer)
           (insert "* " title "\n\n" content))))))
 
-(defun my/org--strip-property-drawers ()
+(defun org-roam-semantic--org-strip-property-drawers ()
   "Remove all :PROPERTIES:…:END: drawers anywhere in the buffer."
   (save-excursion
     (goto-char (point-min))
@@ -494,7 +502,7 @@ wrap contents under a synthetic top-level heading using #+title or filename."
       (while (re-search-forward rx nil t)
         (replace-match "" t t)))))
 
-(defun my/org--with-org-file (org-file thunk)
+(defun org-roam-semantic--with-org-file (org-file thunk)
   "Open ORG-FILE into a temp org buffer and run THUNK there."
   (unless (and org-file (file-readable-p org-file))
     (error "File not found or unreadable: %s" org-file))
@@ -502,8 +510,8 @@ wrap contents under a synthetic top-level heading using #+title or filename."
     (insert-file-contents org-file)
     (let ((default-directory (file-name-directory org-file)))
       (delay-mode-hooks (org-mode)))
-    (my/org--md-wrap-if-needed)
-    (my/org--strip-property-drawers)
+    (org-roam-semantic--org-md-wrap-if-needed)
+    (org-roam-semantic--org-strip-property-drawers)
     (let ((org-export-use-babel nil)
           (org-confirm-babel-evaluate nil)
           (org-export-with-broken-links 'mark)
@@ -517,31 +525,31 @@ wrap contents under a synthetic top-level heading using #+title or filename."
           (org-export-with-drawers nil))
       (funcall thunk))))
 
-(defun my/org-export-md-string (org-file)
+(defun org-roam-semantic--export-md-string (org-file)
   "Export ORG-FILE to Markdown and return it as a Lisp string."
-  (my/org--with-org-file
+  (org-roam-semantic--with-org-file
    org-file
    (lambda ()
      ;; (org-export-as BACKEND SUBTREEP VISIBLE-ONLY BODY-ONLY EXT-PLIST)
      (org-export-as 'md nil nil t '(:explicit-links t)))))
 
-(defun my/org--temp-md-path (org-file)
+(defun org-roam-semantic--temp-md-path (org-file)
   "Deterministic-but-unique temp filename for ORG-FILE."
   (let* ((abs (expand-file-name org-file))
          (mtime (or (nth 5 (file-attributes abs)) (current-time)))
          (sig  (secure-hash 'sha1 (format "%s::%s" abs mtime))))
     (expand-file-name (format "orgmd-%s.md" sig) temporary-file-directory)))
 
-(defun my/org-export-md-to-tempfile (org-file)
+(defun org-roam-semantic--export-md-tempfile (org-file)
   "Export ORG-FILE to a deterministic temp file and return the path."
-  (let* ((out (my/org--temp-md-path org-file))
-         (md  (my/org-export-md-string org-file)))
+  (let* ((out (org-roam-semantic--temp-md-path org-file))
+         (md  (org-roam-semantic--export-md-string org-file)))
     (with-temp-file out (insert md))
     out))
 
-(defun my/org-export-md-to-temp-read-delete (org-file)
+(defun org-roam-semantic--export-md-read-delete (org-file)
   "Export ORG-FILE, read result, delete temp, return Markdown as Lisp string."
-  (let* ((path (my/org-export-md-to-tempfile org-file))
+  (let* ((path (org-roam-semantic--export-md-tempfile org-file))
          (contents (with-temp-buffer
                      (insert-file-contents path)
                      (buffer-string))))
@@ -550,21 +558,21 @@ wrap contents under a synthetic top-level heading using #+title or filename."
 
 ;;; Auto-embedding hook
 (after! org-roam-vector-search
-  (defun my/update-embedding-on-save ()
+  (defun org-roam-semantic--update-on-save ()
     (when (and (derived-mode-p 'org-mode)
                (buffer-file-name)
                (org-roam-file-p)
                (not (string-match-p "/daily/" (buffer-file-name))))
-      (my/generate-embedding-for-note (buffer-file-name)))))
+      (org-roam-semantic-generate-embedding (buffer-file-name)))))
 
 ;; Add the hook
-(add-hook 'before-save-hook 'my/update-embedding-on-save)
+(add-hook 'before-save-hook 'org-roam-semantic--update-on-save)
 
 ;;; Key Bindings for Vector Search
 
-(global-set-key (kbd "C-c v s") 'my/search-notes-by-concept)
-(global-set-key (kbd "C-c v i") 'my/insert-similar-notes)
-(global-set-key (kbd "C-c v r") 'my/insert-related-notes) ; Keep the manual search version too
+(global-set-key (kbd "C-c v s") 'org-roam-semantic-search)
+(global-set-key (kbd "C-c v i") 'org-roam-semantic-insert-similar)
+(global-set-key (kbd "C-c v r") 'org-roam-semantic-insert-related)
 
 (provide 'org-roam-vector-search)
 

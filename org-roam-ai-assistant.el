@@ -1,511 +1,393 @@
-;;; org-roam-api.el --- Complete API for org-roam knowledge management -*- lexical-binding: t; -*-
+;;; org-roam-ai-assistant.el --- AI-powered enhancement and analysis for org-roam -*- lexical-binding: t; -*-
 
 ;;; Commentary:
-;; Complete API for org-roam integration including:
-;; - Basic note creation and search
-;; - Enhanced contextual search for RAG
-;; - Simplified draft management (one draft per room)
+;; AI-powered enhancement and analysis for org-roam notes with vector context.
+;;
+;; This package provides intelligent AI assistance for your org-roam knowledge base.
+;; It uses vector similarity search to find related notes and includes that context
+;; when making AI suggestions, resulting in more relevant and connected enhancements.
 
 ;;; Code:
 
 (require 'org-roam)
+(require 'org-roam-vector-search)
 (require 'json)
 
-;;; ============================================================================
-;;; HELPER FUNCTIONS
-;;; ============================================================================
+;;; Configuration
 
-(defun my/api--ensure-org-roam-db ()
-  "Ensure org-roam database is available."
-  t) ; No automatic sync - handle selectively per function
+(defgroup org-roam-ai-assistant nil
+  "AI-powered assistance for org-roam notes."
+  :group 'org-roam
+  :prefix "org-roam-ai-")
 
-(defun my/api--json-response (data)
-  "Convert DATA to JSON string for API response."
-  (json-encode data))
+(defcustom org-roam-ai-default-model "llama3.1:8b"
+  "Default model to use for AI text generation.
+This should be a model available in your Ollama installation.
+Popular options:
+- llama3.1:8b (recommended default)
+- qwen2.5:7b (good alternative)
+- gemma2:9b (Google's model)"
+  :type 'string
+  :group 'org-roam-ai-assistant)
 
-(defun my/api--generate-id ()
-  "Generate a unique ID for new notes."
-  (format "%s" (time-convert nil 'integer)))
+(defcustom org-roam-ai-context-limit 3
+  "Number of similar notes to include as context for AI requests.
+Higher values provide more context but may overwhelm the AI with information.
+Recommended range: 2-5."
+  :type 'integer
+  :group 'org-roam-ai-assistant)
 
-(defun my/api--create-org-file (title id)
-  "Create org file path for TITLE with ID."
-  (let ((filename (format "%s-%s.org" 
-                         (downcase (replace-regexp-in-string "[^a-zA-Z0-9]+" "-" title))
-                         id)))
-    (expand-file-name filename org-roam-directory)))
+(defcustom org-roam-ai-max-response-tokens 2000
+  "Maximum number of tokens for AI responses.
+Longer responses provide more detail but take more time and resources.
+Adjust based on your model's capabilities and needs."
+  :type 'integer
+  :group 'org-roam-ai-assistant)
 
-(defun my/api--node-to-json (node)
-  "Convert org-roam NODE to JSON-serializable format."
-  (when node
-    (let* ((file (org-roam-node-file node))
-           (properties (my/api--extract-properties file)))
-      `((id . ,(org-roam-node-id node))
-        (title . ,(org-roam-node-title node))
-        (file . ,file)
-        (status . ,(cdr (assoc "status" properties)))
-        (priority . ,(cdr (assoc "priority" properties)))
-        (created . ,(format-time-string "%Y-%m-%d %H:%M:%S" 
-                                       (org-roam-node-file-mtime node)))))))
+;;; Internal Helper Functions
 
-(defun my/api--extract-properties (file)
-  "Extract org properties from FILE."
-  (when file
-    (condition-case nil
-        (with-temp-buffer
-          (insert-file-contents file)
-          (org-mode)
-          (goto-char (point-min))
-          (let ((props '()))
-            (when (re-search-forward "^:PROPERTIES:" nil t)
-              (while (and (forward-line 1)
-                         (not (looking-at "^:END:"))
-                         (not (eobp)))
-                (when (looking-at "^:\\([^:]+\\):\\s-*\\(.*\\)\\s-*$")
-                  (push (cons (downcase (match-string 1)) 
-                             (match-string 2)) props))))
-            props))
-      (error '()))))
+(defun org-roam-ai--get-context-for-note (file &optional limit)
+  "Get contextual information from similar notes for FILE.
+Returns a formatted string with content from the most similar notes."
+  (let* ((limit (or limit org-roam-ai-context-limit))
+         (content (org-roam-semantic--get-content file))
+         (similarities (when content
+                        (org-roam-semantic-get-similar-data content (1+ limit)))))
 
-;;; ============================================================================
-;;; BASIC NOTE CREATION AND SEARCH
-;;; ============================================================================
+    ;; Filter out the current file and take requested number
+    (setq similarities (seq-remove (lambda (result)
+                                    (string= (car result) file))
+                                  similarities))
+    (setq similarities (seq-take similarities limit))
 
-(defun my/api-create-note (title content &optional type confidence)
-  "Create new org-roam note with properties."
-  (interactive)
-  (my/api--ensure-org-roam-db)
-  
-  (let* ((id (my/api--generate-id))
-         (file-path (my/api--create-org-file title id))
-         (type (or type "reference"))
-         (confidence (or confidence "medium")))
-    
-    (with-temp-file file-path
-      (insert (format ":PROPERTIES:\n")
-              (format ":ID: %s\n" id)
-              (format ":TYPE: %s\n" type)
-              (format ":CONFIDENCE: %s\n" confidence)
-              (format ":END:\n")
-              (format "#+title: %s\n\n" title)
-              (format "%s\n" (or content ""))))
- 
-    (org-roam-db-sync)
-    
-    (let ((node (org-roam-node-from-id id)))
-      (json-encode
-        `((success . t)
-          (message . "Note created successfully")
-          (note . ,(my/api--node-to-json node)))))))
+    (if similarities
+        (let ((context-parts '()))
+          (dolist (result similarities)
+            (let* ((similar-file (car result))
+                   (similarity (cadr result))
+                   (title (org-roam-semantic--get-title similar-file))
+                   (content (org-roam-semantic--get-content similar-file)))
+              (when content
+                (push (format "=== Related Note: %s (similarity: %.3f) ===\n%s\n"
+                             title similarity content)
+                      context-parts))))
+          (if context-parts
+              (concat "\n--- CONTEXT FROM YOUR KNOWLEDGE BASE ---\n"
+                     (string-join (reverse context-parts) "\n")
+                     "\n--- END CONTEXT ---\n")
+            ""))
+      "")))
 
-(defun my/api-search-notes (query)
-  "Search org-roam notes by QUERY."
-  (interactive)
-  (my/api--ensure-org-roam-db)
-  
-  (let* ((query-words (split-string (downcase query) "\\s-+" t))
-         (all-nodes (org-roam-node-list))
-         (matching-nodes 
-          (seq-filter 
-           (lambda (node)
-             (let ((title (downcase (org-roam-node-title node))))
-               (seq-some
-                (lambda (word)
-                  (string-match-p (regexp-quote word) title))
-                query-words)))
-           all-nodes))
-         (node-data (mapcar #'my/api--node-to-json matching-nodes)))
-    
-    (my/api--json-response
-     `((success . t)
-       (query . ,query)
-       (total_found . ,(length matching-nodes))
-       (notes . ,node-data)))))
+(defun org-roam-ai--build-enhanced-prompt (base-prompt current-content context)
+  "Build an enhanced prompt that includes context from the knowledge base."
+  (format "%s
 
-;;; ============================================================================
-;;; ENHANCED CONTEXTUAL SEARCH (for RAG)
-;;; ============================================================================
+Current note content:
+%s
 
-(defun my/api-contextual-search (query &optional limit)
-  "Enhanced search that returns rich context for LLM consumption."
-  (interactive)
-  (my/api--ensure-org-roam-db)
-  
-  (let* ((limit (or limit 10))
-         (query-words (split-string (downcase query) "\\s-+" t))
-         (all-nodes (org-roam-node-list))
-         (matching-nodes 
-          (seq-filter 
-           (lambda (node)
-             (let ((title (downcase (org-roam-node-title node)))
-                   (content (when-let ((file (org-roam-node-file node)))
-                             (condition-case nil
-                                 (with-temp-buffer
-                                   (insert-file-contents file)
-                                   (downcase (buffer-string)))
-                               (error "")))))
-               (seq-some
-                (lambda (word)
-                  (or (string-match-p (regexp-quote word) title)
-                      (and content (string-match-p (regexp-quote word) content))))
-                query-words)))
-           all-nodes))
-         (limited-results (seq-take matching-nodes limit))
-         (enriched-results
-          (mapcar (lambda (node)
-                    (my/api--enrich-node-context node query-words))
-                  limited-results)))
-    
-    (my/api--json-response
-     `((success . t)
-       (query . ,query)
-       (context_type . "enhanced_search")
-       (total_found . ,(length matching-nodes))
-       (returned . ,(length limited-results))
-       (notes . ,enriched-results)
-       (knowledge_context . ,(my/api--generate-knowledge-context enriched-results query))))))
+%s
 
-(defun my/api--enrich-node-context (node query-words)
-  "Enrich NODE with full content, connections, and relevance scoring."
-  (let* ((file (org-roam-node-file node))
-         (full-content (when file
-                        (condition-case nil
-                            (with-temp-buffer
-                              (insert-file-contents file)
-                              (buffer-string))
-                          (error ""))))
-         (backlinks (org-roam-backlinks-get node))
-         (forward-links (when file
-                         (org-roam-db-query
-                          [:select [dest] :from links :where (= source $s1)]
-                          (org-roam-node-id node))))
-         (properties (my/api--extract-properties file)))
-    
-    `((id . ,(org-roam-node-id node))
-      (title . ,(org-roam-node-title node))
-      (file . ,file)
-      (full_content . ,full-content)
-      (properties . ,properties)
-      (backlinks . ,(mapcar (lambda (backlink)
-                             `((id . ,(org-roam-node-id (org-roam-backlink-source-node backlink)))
-                               (title . ,(org-roam-node-title (org-roam-backlink-source-node backlink)))))
-                           backlinks))
-      (forward_links . ,(mapcar (lambda (link-dest)
-                                 (when-let ((dest-node (org-roam-node-from-id link-dest)))
-                                   `((id . ,link-dest)
-                                     (title . ,(org-roam-node-title dest-node)))))
-                               forward-links))
-      (relevance_score . ,(my/api--calculate-relevance node query-words))
-      (created . ,(format-time-string "%Y-%m-%d %H:%M:%S" 
-                                     (org-roam-node-file-mtime node))))))
+Please provide a response that builds upon and connects with the existing knowledge shown in the context above. Be specific and practical, referencing relevant concepts from the related notes when helpful."
+          base-prompt
+          (or current-content "")
+          (or context "")))
 
-(defun my/api--generate-knowledge-context (enriched-results query)
-  "Generate contextual summary for LLM about the knowledge graph state."
-  (let ((total-notes (length enriched-results))
-        (connection-count (apply #'+ (mapcar (lambda (note)
-                                              (+ (length (cdr (assoc 'backlinks note)))
-                                                 (length (cdr (assoc 'forward_links note)))))
-                                            enriched-results))))
-    `((query_intent . ,query)
-      (total_relevant_notes . ,total-notes)
-      (total_connections . ,connection-count)
-      (avg_connections_per_note . ,(if (> total-notes 0) 
-                                      (/ connection-count total-notes) 
-                                    0))
-      (knowledge_density . ,(if (> total-notes 1)
-                               (/ connection-count (* total-notes (1- total-notes)))
-                             0)))))
+(defun org-roam-ai--call-ai-with-context (prompt &optional system-prompt)
+  "Call the AI with the given prompt and optional system prompt.
+Uses org-roam-ai-generate-text from the vector search package."
+  (let ((response (org-roam-ai-generate-text prompt system-prompt)))
+    (when response
+      ;; Clean up the response
+      (string-trim response))))
 
-(defun my/api--calculate-relevance (node query-words)
-  "Calculate relevance score for NODE given QUERY-WORDS."
-  (let* ((title (downcase (org-roam-node-title node)))
-         (content (when-let ((file (org-roam-node-file node)))
-                   (condition-case nil
-                       (with-temp-buffer
-                         (insert-file-contents file)
-                         (downcase (buffer-string)))
-                     (error ""))))
-         (title-matches (seq-count (lambda (word)
-                                    (string-match-p (regexp-quote word) title))
-                                  query-words))
-         (content-matches (seq-count (lambda (word)
-                                      (and content (string-match-p (regexp-quote word) content)))
-                                    query-words))
-         (total-words (length query-words)))
-    
-    (if (> total-words 0)
-        (+ (* 0.7 (/ title-matches (float total-words)))
-           (* 0.3 (/ content-matches (float total-words))))
-      0)))
+;;; Core AI Assistant Functions
 
-;;; ============================================================================
-;;; SIMPLIFIED DRAFT MANAGEMENT (One Draft Per Room)
-;;; ============================================================================
+;;;###autoload
+(defun org-roam-ai-enhance-with-context (&optional custom-request)
+  "Enhance the current org-roam note using AI with context from similar notes.
+With prefix argument, prompts for a custom enhancement request."
+  (interactive "P")
+  (unless (and (derived-mode-p 'org-mode) (org-roam-file-p))
+    (user-error "This function only works in org-roam files"))
 
-(defun my/api--draft-file-path (room-id)
-  "Get draft file path for ROOM-ID."
-  (let ((clean-room-id (replace-regexp-in-string "[^a-zA-Z0-9]" "" room-id)))
-    (expand-file-name (format "draft-%s.org" clean-room-id) org-roam-directory)))
+  (let* ((file (buffer-file-name))
+         (current-content (org-roam-semantic--get-content file))
+         (context (org-roam-ai--get-context-for-note file))
+         (enhancement-request
+          (if custom-request
+              (read-string "Enhancement request: "
+                          "Expand and enrich this note with technical details and practical examples")
+            "Flesh out and expand this note with detailed information, technical details, examples, and practical applications. Make it comprehensive and valuable."))
+         (system-prompt
+          "You are an AI assistant helping to enhance technical knowledge notes. Provide detailed, accurate, and practical information. Build upon existing knowledge and make meaningful connections between concepts.")
+         (prompt (org-roam-ai--build-enhanced-prompt enhancement-request current-content context)))
 
-(defun my/api-get-draft (room-id)
-  "Get current draft for ROOM-ID, or nil if none exists."
-  (my/api--ensure-org-roam-db)
-  
-  (let ((draft-file (my/api--draft-file-path room-id)))
-    (if (file-exists-p draft-file)
-        (condition-case nil
-            (with-temp-buffer
-              (insert-file-contents draft-file)
-              (let (original-request current-draft created)
-                (goto-char (point-min))
-                (when (re-search-forward ":ORIGINAL-REQUEST: \\(.+\\)" nil t)
-                  (setq original-request (match-string 1)))
-                (goto-char (point-min))
-                (when (re-search-forward ":CREATED: \\(.+\\)" nil t)
-                  (setq created (match-string 1)))
-                
-                ;; Content extraction using working method
-                (goto-char (point-min))
-                (when (search-forward "* Current Draft" nil t)
-                  (when (search-forward "#+begin_example" nil t)
-                    (forward-line 1)
-                    (let ((start (point)))
-                      (when (search-forward "#+end_example" nil t)
-                        (beginning-of-line)
-                        (setq current-draft (buffer-substring-no-properties start (point)))
-                        (setq current-draft (string-trim current-draft))))))
-                
-                (my/api--json-response
-                 `((success . t)
-                   (has_draft . t)
-                   (room_id . ,room-id)
-                   (original_request . ,original-request)
-                   (current_draft . ,(or current-draft ""))
-                   (created . ,created)
-                   (has_content . ,(not (string-empty-p (or current-draft ""))))))))
-          (error 
-           (my/api--json-response
-            `((success . nil)
-              (error . "Could not read draft file")
-              (room_id . ,room-id)))))
-      (my/api--json-response
-       `((success . t)
-         (has_draft . nil)
-         (room_id . ,room-id)
-         (message . "No draft exists"))))))
+    (message "Generating AI enhancement with context from %d related notes..."
+             (min org-roam-ai-context-limit (length (org-roam-list-files))))
 
-(defun my/api-update-draft (room-id content &optional revision-note)
-  "Create or update draft for ROOM-ID with CONTENT."
-  (my/api--ensure-org-roam-db)
-  
-  (let ((draft-file (my/api--draft-file-path room-id))
-        (revision-note (or revision-note "Draft updated"))
-        (is-new-draft (not (file-exists-p (my/api--draft-file-path room-id)))))
-    
-    (if is-new-draft
-        ;; Create new draft
-        (with-temp-file draft-file
-          (insert ":PROPERTIES:\n")
-          (insert (format ":ROOM-ID: %s\n" room-id))
-          (insert (format ":ORIGINAL-REQUEST: %s\n" revision-note))
-          (insert (format ":CREATED: %s\n" (format-time-string "%Y-%m-%dT%H:%M:%SZ")))
-          (insert (format ":LAST-UPDATED: %s\n" (format-time-string "%Y-%m-%dT%H:%M:%SZ")))
-          (insert ":END:\n")
-          (insert "#+title: Draft\n\n")
-          (insert "* Current Draft\n#+begin_example\n")
-          (insert content "\n")
-          (insert "#+end_example\n\n")
-          (insert "* Revision History\n")
-          (insert (format "** %s - Draft Created\n" (format-time-string "%H:%M:%S")))
-          (insert (format "%s\n" revision-note)))
-      
-      ;; Update existing draft
-      (with-temp-buffer
-        (insert-file-contents draft-file)
-        (goto-char (point-min))
-        
-        ;; Update LAST-UPDATED property
-        (when (re-search-forward ":LAST-UPDATED: .*" nil t)
-          (replace-match (format ":LAST-UPDATED: %s" 
-                                (format-time-string "%Y-%m-%dT%H:%M:%SZ"))))
-        
-        ;; Update current draft content
-        (goto-char (point-min))
-        (when (search-forward "* Current Draft" nil t)
-          (when (search-forward "#+begin_example" nil t)
-            (forward-line 1)
-            (let ((start (point)))
-              (when (search-forward "#+end_example" nil t)
-                (beginning-of-line)
-                (delete-region start (point))
-                (insert content "\n")))))
-        
-        ;; Add revision history entry  
-        (goto-char (point-max))
-        (insert (format "\n** %s - Revision\n" (format-time-string "%H:%M:%S")))
-        (insert (format "%s\n" revision-note))
-        
-        (write-file draft-file)))
-    
-    (my/api--json-response
-     `((success . t)
-       (action . ,(if is-new-draft "draft_created" "draft_updated"))
-       (room_id . ,room-id)
-       (is_new . ,is-new-draft)
-       (message . ,(if is-new-draft "Draft created successfully" "Draft updated successfully"))))))
-
-(defun my/api-finalize-draft (room-id final-title)
-  "Convert draft to permanent note and remove draft file."
-  (my/api--ensure-org-roam-db)
-  
-  (let ((draft-file (my/api--draft-file-path room-id)))
-    (if (file-exists-p draft-file)
-        (condition-case nil
-            (let (current-draft)
-              ;; Extract draft content using working method
-              (with-temp-buffer
-                (insert-file-contents draft-file)
-                (goto-char (point-min))
-                (when (search-forward "* Current Draft" nil t)
-                  (when (search-forward "#+begin_example" nil t)
-                    (forward-line 1)
-                    (let ((start (point)))
-                      (when (search-forward "#+end_example" nil t)
-                        (beginning-of-line)
-                        (setq current-draft (buffer-substring-no-properties start (point)))
-                        (setq current-draft (string-trim current-draft)))))))
-              
-              (if (string-empty-p (or current-draft ""))
-                  (my/api--json-response
-                   `((success . nil)
-                     (error . "No draft content to save")
-                     (room_id . ,room-id)))
-                
-                ;; Create final note
-                (let* ((final-id (my/api--generate-id))
-                       (file-path (my/api--create-org-file final-title final-id)))
-                  
-                  (with-temp-file file-path
-                    (insert current-draft))
-                  
-                  ;; Remove draft file
-                  (delete-file draft-file)
-                  
-                  ;; Sync database so final note is immediately available
-                  (org-roam-db-sync)
-                  
-                  (my/api--json-response
-                   `((success . t)
-                     (action . "draft_finalized")
-                     (room_id . ,room-id)
-                     (final_note_id . ,final-id)
-                     (final_note_title . ,final-title)
-                     (message . ,(format "Draft saved as \"%s\"" final-title)))))))
-          (error 
-           (my/api--json-response
-            `((success . nil)
-              (error . "Failed to finalize draft")
-              (room_id . ,room-id)))))
-      (my/api--json-response
-       `((success . nil)
-         (error . "No draft exists to finalize")
-         (room_id . ,room-id))))))
-
-(defun my/api-cancel-draft (room-id)
-  "Delete draft file for ROOM-ID."
-  (my/api--ensure-org-roam-db)
-  
-  (let ((draft-file (my/api--draft-file-path room-id)))
-    (if (file-exists-p draft-file)
-        (progn
-          (delete-file draft-file)
-          (my/api--json-response
-           `((success . t)
-             (action . "draft_cancelled")
-             (room_id . ,room-id)
-             (message . "Draft cancelled"))))
-      (my/api--json-response
-       `((success . t)
-         (action . "no_draft_to_cancel")
-         (room_id . ,room-id)
-         (message . "No draft to cancel"))))))
-
-;; Configure org-roam dailies
-(setq org-roam-dailies-directory "daily/")
-(setq org-roam-dailies-capture-templates
-      '(("d" "default" entry
-         "* %<%H:%M> %?"
-         :target (file+head "%<%Y-%m-%d>.org"
-                           "#+title: %<%Y-%m-%d>\n#+filetags: :daily:\n\n"))))
-
-(defun my/add-daily-entry-structured (timestamp title points next-steps tags &optional type priority)
-  "Add structured entry to today's daily note. Handles both journal and TODO entries.
-TYPE: 'journal' or 'todo'
-PRIORITY: 'A', 'B', or 'C' for TODOs"
-  (let* ((today (format-time-string "%Y-%m-%d"))
-         (daily-file (expand-file-name (concat today ".org")
-                                      (expand-file-name "daily" org-roam-directory)))
-         (entry-type (or type "journal"))
-         (is-todo (string= entry-type "todo")))
-
-    (unless (file-exists-p (file-name-directory daily-file))
-      (make-directory (file-name-directory daily-file) t))
-
-    (unless (file-exists-p daily-file)
-      (with-temp-file daily-file
-        (insert (format "#+title: %s\n#+filetags: :daily:\n\n" today))))
-
-    (with-current-buffer (find-file-noselect daily-file)
-      (goto-char (point-max))
-      (unless (bolp) (insert "\n"))
-
-      ;; Find or create appropriate section
-      (let ((section-title (if is-todo "* TODOs" "* Journal")))
-        (goto-char (point-min))
-        (unless (search-forward section-title nil t)
-          (goto-char (point-max))
-          (insert section-title "\n")))
-
-      ;; Go to end of appropriate section
-      (goto-char (point-max))
-
-      ;; Insert entry header with appropriate formatting
-      (if is-todo
-          (let ((priority-str (or priority "B")))
-            (if (and tags (> (length tags) 0))
-                (insert (format "** TODO [#%s] %s %s    %s\n"
-                               priority-str timestamp title
-                               (concat ":" (string-join tags ":") ":")))
-              (insert (format "** TODO [#%s] %s %s\n" priority-str timestamp title))))
-        ;; Regular journal entry
-        (if (and tags (> (length tags) 0))
-            (insert (format "** %s %s    %s\n"
-                           timestamp title
-                           (concat ":" (string-join tags ":") ":")))
-          (insert (format "** %s %s\n" timestamp title))))
-
-      ;; Insert main points
-      (when points
-        (dolist (point points)
-          (insert (format "- %s\n" point))))
-
-      ;; Insert next steps
-      (when next-steps
-        (if is-todo
-            (progn
-              (insert "\n*** Subtasks\n")
-              (dolist (step next-steps)
-                (insert (format "- [ ] %s\n" step))))
+    (let ((response (org-roam-ai--call-ai-with-context prompt system-prompt)))
+      (if response
           (progn
-            (insert "\n*** Next Steps\n")
-            (dolist (step next-steps)
-              (insert (format "- [ ] %s\n" step))))))
+            (goto-char (point-max))
+            (unless (bolp) (insert "\n"))
+            (insert "\n** AI Enhancement\n\n")
+            (insert response)
+            (insert "\n")
+            (message "AI enhancement complete. Review and edit as needed."))
+        (message "Failed to get AI response. Check your Ollama configuration.")))))
 
-      (insert "\n")
-      (save-buffer))
+;;;###autoload
+(defun org-roam-ai-explain-concept ()
+  "Get a quick AI explanation of the concept at point or selected region."
+  (interactive)
+  (unless (and (derived-mode-p 'org-mode) (org-roam-file-p))
+    (user-error "This function only works in org-roam files"))
 
-    (message "Added %s entry to daily note: %s" entry-type daily-file)))
+  (let* ((concept (if (use-region-p)
+                     (buffer-substring-no-properties (region-beginning) (region-end))
+                   (thing-at-point 'word t)))
+         (file (buffer-file-name))
+         (context (org-roam-ai--get-context-for-note file 2)) ; Use less context for explanations
+         (system-prompt
+          "You are an AI assistant providing concise, accurate explanations of technical concepts. Focus on clarity and practical understanding.")
+         (prompt (format "Explain the concept '%s' in the context of the domain shown in the related notes. Be concise but informative.%s"
+                        concept context)))
 
+    (if concept
+        (let ((response (org-roam-ai--call-ai-with-context prompt system-prompt)))
+          (if response
+              (message "Concept '%s': %s" concept response)
+            (message "Failed to get explanation. Check your Ollama configuration.")))
+      (message "No concept found at point. Select text or place cursor on a word."))))
 
+;;;###autoload
+(defun org-roam-ai-improve-paragraph ()
+  "Improve the current paragraph using AI for clarity and technical accuracy."
+  (interactive)
+  (unless (and (derived-mode-p 'org-mode) (org-roam-file-p))
+    (user-error "This function only works in org-roam files"))
 
-(provide 'org-roam-api)
-;;; org-roam-api.el ends here
+  (save-excursion
+    (let* ((paragraph-bounds (bounds-of-thing-at-point 'paragraph))
+           (start (car paragraph-bounds))
+           (end (cdr paragraph-bounds))
+           (paragraph-text (when paragraph-bounds
+                            (buffer-substring-no-properties start end)))
+           (file (buffer-file-name))
+           (context (org-roam-ai--get-context-for-note file 2))
+           (system-prompt
+            "You are an AI assistant helping improve technical writing. Enhance clarity, accuracy, and practical value while maintaining the original meaning and structure.")
+           (prompt (format "Improve this paragraph for clarity, technical accuracy, and practical value:\n\n%s\n\n%s\n\nReturn only the improved paragraph, maintaining the same general structure and meaning."
+                          paragraph-text context)))
+
+      (if paragraph-text
+          (let ((response (org-roam-ai--call-ai-with-context prompt system-prompt)))
+            (if response
+                (progn
+                  (delete-region start end)
+                  (insert response)
+                  (message "Paragraph improved with AI assistance."))
+              (message "Failed to get AI response. Check your Ollama configuration.")))
+        (message "No paragraph found at point.")))))
+
+;;;###autoload
+(defun org-roam-ai-suggest-connections ()
+  "Analyze current note and suggest valuable connections to other notes."
+  (interactive)
+  (unless (and (derived-mode-p 'org-mode) (org-roam-file-p))
+    (user-error "This function only works in org-roam files"))
+
+  (let* ((file (buffer-file-name))
+         (current-content (org-roam-semantic--get-content file))
+         (context (org-roam-ai--get-context-for-note file 5)) ; More context for connections
+         (system-prompt
+          "You are an AI assistant helping to identify valuable connections between knowledge notes. Focus on meaningful relationships that would enhance understanding.")
+         (prompt (format "Based on the current note and the related notes shown in the context, suggest 3-5 specific connections that would be most valuable. For each suggestion, explain why the connection would be beneficial for understanding or building upon this topic.\n\nCurrent note:\n%s\n\n%s"
+                        current-content context)))
+
+    (let ((response (org-roam-ai--call-ai-with-context prompt system-prompt)))
+      (if response
+          (with-current-buffer (get-buffer-create "*AI Connection Suggestions*")
+            (erase-buffer)
+            (org-mode)
+            (insert (format "* Connection Suggestions for: %s\n\n"
+                           (org-roam-semantic--get-title file)))
+            (insert response)
+            (insert "\n\n** How to Use\n")
+            (insert "- Review each suggested connection\n")
+            (insert "- Add relevant org-roam links: [[id:node-id][Title]]\n")
+            (insert "- Use C-c v s to search for notes by concept\n")
+            (goto-char (point-min))
+            (display-buffer (current-buffer))
+            (message "Connection suggestions generated. Check the *AI Connection Suggestions* buffer."))
+        (message "Failed to get AI response. Check your Ollama configuration.")))))
+
+;;;###autoload
+(defun org-roam-ai-find-knowledge-gaps ()
+  "Identify missing topics or concepts that would complement current knowledge."
+  (interactive)
+  (unless (and (derived-mode-p 'org-mode) (org-roam-file-p))
+    (user-error "This function only works in org-roam files"))
+
+  (let* ((file (buffer-file-name))
+         (current-content (org-roam-semantic--get-content file))
+         (context (org-roam-ai--get-context-for-note file 4))
+         (system-prompt
+          "You are an AI assistant helping to identify knowledge gaps and learning opportunities. Focus on practical, actionable suggestions.")
+         (prompt (format "Based on the current note and related knowledge shown in the context, identify 3-5 missing topics, techniques, or concepts that would significantly complement and enhance this knowledge area. For each gap, explain why it would be valuable to learn and how it connects to existing knowledge.\n\nCurrent note:\n%s\n\n%s"
+                        current-content context)))
+
+    (let ((response (org-roam-ai--call-ai-with-context prompt system-prompt)))
+      (if response
+          (with-current-buffer (get-buffer-create "*AI Knowledge Gaps*")
+            (erase-buffer)
+            (org-mode)
+            (insert (format "* Knowledge Gaps for: %s\n\n"
+                           (org-roam-semantic--get-title file)))
+            (insert response)
+            (insert "\n\n** Next Steps\n")
+            (insert "- Choose 1-2 high-priority gaps to explore\n")
+            (insert "- Create new notes for topics you want to learn\n")
+            (insert "- Use these as research and learning objectives\n")
+            (goto-char (point-min))
+            (display-buffer (current-buffer))
+            (message "Knowledge gap analysis complete. Check the *AI Knowledge Gaps* buffer."))
+        (message "Failed to get AI response. Check your Ollama configuration.")))))
+
+;;; System Status and Maintenance Functions
+
+;;;###autoload
+(defun org-roam-ai-system-status ()
+  "Check the status of the AI assistant system including dependencies."
+  (interactive)
+  (let* ((vector-status (org-roam-semantic-status))
+         (ollama-url org-roam-semantic-ollama-url)
+         (ai-model org-roam-ai-default-model)
+         (embedding-model org-roam-semantic-embedding-model))
+
+    (with-current-buffer (get-buffer-create "*AI System Status*")
+      (erase-buffer)
+      (insert "* AI Assistant System Status\n\n")
+
+      ;; Configuration
+      (insert "** Configuration\n")
+      (insert (format "- Ollama URL: %s\n" ollama-url))
+      (insert (format "- AI Model: %s\n" ai-model))
+      (insert (format "- Embedding Model: %s\n" embedding-model))
+      (insert (format "- Context Limit: %d notes\n" org-roam-ai-context-limit))
+      (insert (format "- Max Response Tokens: %d\n\n" org-roam-ai-max-response-tokens))
+
+      ;; Dependencies
+      (insert "** Dependencies\n")
+      (insert (format "- org-roam-vector-search: %s\n"
+                     (if (featurep 'org-roam-vector-search) "✓ Loaded" "✗ Not loaded")))
+      (insert (format "- Vector search status: Check output below\n\n"))
+
+      ;; Test AI connectivity
+      (insert "** AI Connectivity Test\n")
+      (let ((test-response (org-roam-ai--call-ai-with-context
+                           "Please respond with 'AI system operational' to confirm connectivity.")))
+        (if test-response
+            (insert (format "✓ AI Response: %s\n" test-response))
+          (insert "✗ AI connection failed - check Ollama server and model\n")))
+
+      (insert "\n** Vector Search Status\n")
+      (insert "See message area for embedding coverage details.\n")
+
+      (goto-char (point-min))
+      (display-buffer (current-buffer)))
+
+    ;; Also show vector search status
+    (org-roam-semantic-status)))
+
+;;;###autoload
+(defun org-roam-ai-setup-check ()
+  "Interactive setup verification and troubleshooting guide."
+  (interactive)
+  (let ((issues '())
+        (warnings '()))
+
+    ;; Check org-roam
+    (unless (featurep 'org-roam)
+      (push "org-roam not loaded" issues))
+
+    ;; Check vector search dependency
+    (unless (featurep 'org-roam-vector-search)
+      (push "org-roam-vector-search not loaded - required dependency" issues))
+
+    ;; Check if we're in org-roam directory
+    (unless org-roam-directory
+      (push "org-roam-directory not configured" issues))
+
+    ;; Check Ollama configuration
+    (unless org-roam-semantic-ollama-url
+      (push "Ollama URL not configured" issues))
+
+    ;; Test AI connectivity
+    (let ((ai-test (org-roam-ai--call-ai-with-context "test" "Respond with 'OK'")))
+      (unless ai-test
+        (push "Cannot connect to AI model - check Ollama server" issues)))
+
+    ;; Check embedding coverage
+    (let* ((all-files (org-roam-list-files))
+           (files-with-embeddings (seq-count #'org-roam-semantic--has-embedding-p all-files))
+           (coverage (if (> (length all-files) 0)
+                        (/ (* 100.0 files-with-embeddings) (length all-files))
+                      0)))
+      (when (< coverage 50)
+        (push (format "Low embedding coverage (%.1f%%) - run org-roam-semantic-generate-all-embeddings" coverage)
+              warnings)))
+
+    ;; Display results
+    (with-current-buffer (get-buffer-create "*AI Setup Check*")
+      (erase-buffer)
+      (insert "* AI Assistant Setup Check\n\n")
+
+      (if issues
+          (progn
+            (insert "** Issues Found\n")
+            (dolist (issue issues)
+              (insert (format "✗ %s\n" issue)))
+            (insert "\n"))
+        (insert "** Status: ✓ No critical issues found\n\n"))
+
+      (when warnings
+        (insert "** Warnings\n")
+        (dolist (warning warnings)
+          (insert (format "⚠ %s\n" warning)))
+        (insert "\n"))
+
+      (insert "** Setup Instructions\n")
+      (insert "1. Install Ollama: https://ollama.ai\n")
+      (insert "2. Pull required models:\n")
+      (insert (format "   ollama pull %s\n" org-roam-semantic-embedding-model))
+      (insert (format "   ollama pull %s\n" org-roam-ai-default-model))
+      (insert "3. Configure org-roam-semantic-ollama-url\n")
+      (insert "4. Generate embeddings: M-x org-roam-semantic-generate-all-embeddings\n")
+
+      (goto-char (point-min))
+      (display-buffer (current-buffer)))
+
+    (if issues
+        (message "Setup check complete - %d issues found. See *AI Setup Check* buffer." (length issues))
+      (message "Setup check complete - system ready!"))))
+
+;;; Key Bindings
+
+(defvar org-roam-ai-assistant-map
+  (let ((map (make-sparse-keymap)))
+    (define-key map (kbd "f") 'org-roam-ai-enhance-with-context)
+    (define-key map (kbd "e") 'org-roam-ai-explain-concept)
+    (define-key map (kbd "p") 'org-roam-ai-improve-paragraph)
+    (define-key map (kbd "s") 'org-roam-ai-suggest-connections)
+    (define-key map (kbd "g") 'org-roam-ai-find-knowledge-gaps)
+    (define-key map (kbd "?") 'org-roam-ai-system-status)
+    map)
+  "Keymap for org-roam AI assistant commands.")
+
+;; Set up key bindings
+(global-set-key (kbd "C-c a") org-roam-ai-assistant-map)
+
+(provide 'org-roam-ai-assistant)
+
+;;; org-roam-ai-assistant.el ends here
