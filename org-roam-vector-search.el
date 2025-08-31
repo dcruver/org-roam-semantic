@@ -16,7 +16,7 @@
 
 ;;; Version
 
-(defconst org-roam-semantic-version "1.1.0"
+(defconst org-roam-semantic-version "1.1.1"
   "Version of the org-roam-semantic package suite.")
 
 (defun org-roam-semantic-version ()
