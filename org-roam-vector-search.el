@@ -16,7 +16,7 @@
 
 ;;; Version
 
-(defconst org-roam-semantic-version "1.1.2"
+(defconst org-roam-semantic-version "1.1.3"
   "Version of the org-roam-semantic package suite.")
 
 (defun org-roam-semantic-version ()
@@ -102,17 +102,24 @@ This is a non-interactive version of org-roam-semantic-find-similar for use by o
       (string-trim normalized))))
 
 (defun org-roam-semantic--get-content (file)
-  "Extract the main content of an org-roam note, excluding properties and metadata."
+  "Extract title and content using org-mode functions."
   (with-temp-buffer
     (insert-file-contents file)
-    (org-mode)
-    (goto-char (point-min))
-    ;; Skip past the properties drawer and title
-    (when (re-search-forward "^:END:" nil t)
-      (forward-line 1))
-    ;; Get content from here to end of buffer
-    (let ((content (buffer-substring (point) (point-max))))
-      (org-roam-semantic--normalize-text content))))
+    (delay-mode-hooks (org-mode))
+
+    (let* ((title (org-roam-get-keyword "TITLE"))
+           ;; Use org-mode's property drawer handling
+           (content (save-excursion
+                     (goto-char (point-min))
+                     ;; Skip property drawer if present
+                     (when (org-at-property-drawer-p)
+                       (org-end-of-meta-data t))
+                     (buffer-substring-no-properties (point) (point-max)))))
+
+      (org-roam-semantic--normalize-text
+       (if title
+           (concat title ". " content)
+         content)))))
 
 (defun org-roam-semantic--vector-magnitude (vector)
   "Calculate the magnitude of a vector."
