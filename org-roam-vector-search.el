@@ -102,19 +102,33 @@ This is a non-interactive version of org-roam-semantic-find-similar for use by o
       (string-trim normalized))))
 
 (defun org-roam-semantic--get-content (file)
-  "Extract title and content using org-mode functions."
+  "Extract content including title, properly skipping all front matter."
   (with-temp-buffer
     (insert-file-contents file)
-    (delay-mode-hooks (org-mode))
 
-    (let* ((title (org-roam-get-keyword "TITLE"))
-           ;; Use org-mode's property drawer handling
-           (content (save-excursion
-                     (goto-char (point-min))
-                     ;; Skip property drawer if present
-                     (when (org-at-property-drawer-p)
-                       (org-end-of-meta-data t))
-                     (buffer-substring-no-properties (point) (point-max)))))
+    (let (title content)
+      ;; Extract title
+      (goto-char (point-min))
+      (when (re-search-forward "^#\\+title:\\s-*\\(.+\\)$" nil t)
+        (setq title (match-string 1)))
+
+      ;; Skip to after properties drawer
+      (goto-char (point-min))
+      (when (re-search-forward "^:END:" nil t)
+        (forward-line 1))
+
+      ;; Skip ALL keyword lines (#+title:, #+filetags:, etc.)
+      (while (and (not (eobp))
+                  (looking-at "^#\\+[a-zA-Z_-]+:"))
+        (forward-line 1))
+
+      ;; Skip blank lines
+      (while (and (not (eobp))
+                  (looking-at "^\\s-*$"))
+        (forward-line 1))
+
+      ;; Get actual content
+      (setq content (buffer-substring-no-properties (point) (point-max)))
 
       (org-roam-semantic--normalize-text
        (if title
