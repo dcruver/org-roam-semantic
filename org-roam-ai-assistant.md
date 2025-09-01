@@ -17,9 +17,9 @@ This package provides intelligent AI assistance for your org-roam knowledge base
 
 ```elisp
 (straight-use-package 
-  '(org-roam-semantic :host github :repo "dcruver/org-roam-semantic"))
+  '(org-roam-vector-search :host github :repo "dcruver/org-roam-semantic"))
 (require 'org-roam-vector-search)
-(setq my/ollama-base-url "http://localhost:11434")
+(setq org-roam-semantic-ollama-url "http://localhost:11434")
 ```
 
 2. **Ollama** with both embedding and text generation models:
@@ -37,21 +37,16 @@ ollama pull llama3.1:8b         # For text generation
 ```elisp
 ;; First install org-roam-vector-search (required dependency)
 (straight-use-package 
-  '(org-roam-semantic :host github :repo "dcruver/org-roam-semantic"))
+  '(org-roam-vector-search :host github :repo "dcruver/org-roam-semantic"))
 
 ;; Load both modules
 (require 'org-roam-vector-search)
 (require 'org-roam-ai-assistant)
 
 ;; Configure
-(setq my/ollama-base-url "http://localhost:11434")
+(setq org-roam-semantic-ollama-url "http://localhost:11434")
 
-;; Set up AI assistant keybindings
-(global-set-key (kbd "C-c a f") 'my/ai-flesh-out-with-vector-context)
-(global-set-key (kbd "C-c a e") 'my/ai-quick-explain)
-(global-set-key (kbd "C-c a p") 'my/ai-improve-paragraph)
-(global-set-key (kbd "C-c a s") 'my/ai-suggest-connections)
-(global-set-key (kbd "C-c a g") 'my/ai-find-knowledge-gaps)
+;; Key bindings are automatically set up under C-c a
 ```
 
 ### Via use-package (If you have straight.el integration)
@@ -60,51 +55,43 @@ ollama pull llama3.1:8b         # For text generation
 (use-package org-roam-ai-assistant
   :straight (:host github :repo "dcruver/org-roam-semantic")
   :after (org-roam org-roam-vector-search)
-  :bind (("C-c a f" . my/ai-flesh-out-with-vector-context)
-         ("C-c a e" . my/ai-quick-explain)
-         ("C-c a p" . my/ai-improve-paragraph)
-         ("C-c a s" . my/ai-suggest-connections)
-         ("C-c a g" . my/ai-find-knowledge-gaps)))
+  :config
+  (setq org-roam-ai-default-model "llama3.1:8b"
+        org-roam-ai-context-limit 3))
 ```
 
 ### Manual Installation
 
 1. Clone this repository:
 ```bash
-git clone https://github.com/dcruver/org-roam-ai-assistant.git
+git clone https://github.com/dcruver/org-roam-semantic.git
 ```
 
 2. Add to your load path and require:
 ```elisp
-(add-to-list 'load-path "/path/to/org-roam-ai-assistant")
+(add-to-list 'load-path "/path/to/org-roam-semantic")
 (require 'org-roam-ai-assistant)
 ```
 
 ## Configuration
 
-The AI assistant uses the same Ollama configuration as org-roam-vector-search:
-
 ```elisp
-;; Ollama server URL
-(setq my/ollama-base-url "http://localhost:11434")
+;; Ollama server URL (inherited from vector-search)
+(setq org-roam-semantic-ollama-url "http://localhost:11434")
 
-;; Text generation model  
-(setq my/ai-default-model "llama3.1:8b")
-
-;; Number of similar notes to include as context (default: 3)
-(setq my/ai-context-limit 3)
-
-;; Maximum tokens for AI responses (default: 2000)
-(setq my/ai-max-response-tokens 2000)
+;; AI-specific configuration
+(setq org-roam-ai-default-model "llama3.1:8b")           ; Text generation model
+(setq org-roam-ai-context-limit 3)                       ; Number of similar notes for context
+(setq org-roam-ai-max-response-tokens 2000)              ; Maximum response length
 ```
 
 ## Usage
 
-All functions work within org-roam notes and use vector similarity to find relevant context from your knowledge base.
+All functions work within org-roam notes and use vector similarity to find relevant context from your knowledge base. The AI assistant uses a prefix key system with all commands under `C-c a`.
 
 ### Core Enhancement Functions
 
-#### `my/ai-flesh-out-with-vector-context`
+#### `org-roam-ai-enhance-with-context`
 **Keybinding:** `C-c a f`
 
 The primary AI enhancement function. Expands and enriches the current note using context from similar notes in your knowledge base. With a prefix argument (`C-u C-c a f`), prompts for a specific enhancement request.
@@ -114,49 +101,51 @@ The primary AI enhancement function. Expands and enriches the current note using
 - Expand on concepts with practical applications  
 - Include related information from connected notes
 
-#### `my/ai-quick-explain`  
+#### `org-roam-ai-explain-concept`  
 **Keybinding:** `C-c a e`
 
 Get a quick explanation of the concept at point or selected region. Provides concise, contextual explanations based on your domain and existing knowledge.
 
-#### `my/ai-improve-paragraph`
+#### `org-roam-ai-improve-paragraph`
 **Keybinding:** `C-c a p`
 
 Improve the current paragraph for clarity, technical accuracy, and practical value. Maintains the original meaning while enhancing readability and usefulness.
 
 ### Analysis and Discovery Functions
 
-#### `my/ai-suggest-connections`
+#### `org-roam-ai-suggest-connections`
 **Keybinding:** `C-c a s`  
 
 Analyze the current note and suggest which related notes would be most valuable to link to. Explains why each connection would be beneficial for understanding or building upon the topic.
 
-#### `my/ai-find-knowledge-gaps`
+#### `org-roam-ai-find-knowledge-gaps`
 **Keybinding:** `C-c a g`
 
 Identify missing topics, techniques, or concepts that would complement your current knowledge. Suggests specific areas to explore based on your existing notes and the current topic.
 
 ### System Functions
 
-#### `my/ai-system-status`
+#### `org-roam-ai-system-status`
 **Keybinding:** `C-c a ?`
 
 Check the status of the AI system including vector search coverage and AI connectivity. Useful for troubleshooting and monitoring system health.
 
-#### `my/ai-assistant-setup-check`
+#### `org-roam-ai-setup-check`
 
 Interactive setup verification that checks dependencies, Ollama connectivity, and embedding coverage.
 
 ## Key Bindings
 
-The following key bindings are configured automatically:
+The AI assistant uses a prefix key system. All commands are under `C-c a`:
 
-- `C-c a f` - Flesh out note with AI enhancement
-- `C-c a e` - Explain concept at point
-- `C-c a p` - Improve current paragraph
-- `C-c a s` - Suggest note connections
-- `C-c a g` - Find knowledge gaps  
+- `C-c a f` - **F**lesh out note with AI enhancement
+- `C-c a e` - **E**xplain concept at point
+- `C-c a p` - Improve current **p**aragraph
+- `C-c a s` - **S**uggest note connections
+- `C-c a g` - Find knowledge **g**aps  
 - `C-c a ?` - Check system status
+
+The prefix key design makes it easy to remember commands and discover functionality.
 
 ## Workflow
 
@@ -189,15 +178,33 @@ The AI assistant leverages your existing knowledge base by:
 
 This means AI responses become more valuable and relevant as your knowledge base grows.
 
+## Advanced Configuration
+
+### Custom Models
+
+```elisp
+;; Use different models for different purposes
+(setq org-roam-ai-default-model "qwen2.5:7b")       ; Alternative text model
+(setq org-roam-semantic-embedding-model "all-minilm") ; Faster embeddings
+```
+
+### Context Tuning
+
+```elisp
+;; Adjust context for different use cases
+(setq org-roam-ai-context-limit 5)          ; More context for complex topics
+(setq org-roam-ai-max-response-tokens 3000) ; Longer responses
+```
+
 ## Troubleshooting
 
 ### "Failed to get AI response"
 - Check Ollama connectivity: `curl http://localhost:11434/api/tags`
 - Verify text generation model is installed: `ollama list`
-- Check server URL in configuration
+- Test with: `M-x org-roam-ai-system-status`
 
 ### Poor AI suggestions
-- Ensure you have embeddings: `M-x my/ai-system-status`
+- Ensure you have embeddings: `M-x org-roam-ai-setup-check`
 - Try more specific requests with prefix argument: `C-u C-c a f`
 - Add more content to your notes for better context
 
@@ -205,11 +212,27 @@ This means AI responses become more valuable and relevant as your knowledge base
 - Ensure you're in a file within your `org-roam-directory`
 - Check that the file is recognized: `M-x org-roam-file-p`
 
+### Setup Issues
+Run `M-x org-roam-ai-setup-check` for an interactive diagnostic that checks:
+- Dependencies and configuration
+- Ollama connectivity and models
+- Embedding coverage
+- Common setup problems
+
 ## Dependencies
 
-- org-roam
-- org-roam-vector-search
-- Ollama server with text generation model
+- **org-roam** - Core knowledge management system
+- **org-roam-vector-search** - Required for context-aware AI responses
+- **Ollama** - Local AI server with text generation model
+
+## Integration
+
+The AI assistant integrates seamlessly with:
+
+- **Vector search** for contextual awareness
+- **org-roam** for note management and linking
+- **Automatic embedding updates** after AI modifications
+- **Multiple AI models** via Ollama
 
 ## License
 

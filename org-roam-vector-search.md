@@ -29,18 +29,18 @@ ollama pull nomic-embed-text
 ```elisp
 ;; Install the package
 (straight-use-package 
-  '(org-roam-semantic :host github :repo "dcruver/org-roam-semantic"))
+  '(org-roam-vector-search :host github :repo "dcruver/org-roam-semantic"))
 
 ;; Load the vector search module
 (require 'org-roam-vector-search)
 
 ;; Configure
-(setq my/ollama-base-url "http://localhost:11434")
+(setq org-roam-semantic-ollama-url "http://localhost:11434")
 
-;; Set up keybindings
-(global-set-key (kbd "C-c v s") 'my/search-notes-by-concept)
-(global-set-key (kbd "C-c v i") 'my/insert-similar-notes)
-(global-set-key (kbd "C-c v r") 'my/insert-related-notes)
+;; Set up keybindings (these are set automatically)
+(global-set-key (kbd "C-c v s") 'org-roam-semantic-search)
+(global-set-key (kbd "C-c v i") 'org-roam-semantic-insert-similar)
+(global-set-key (kbd "C-c v r") 'org-roam-semantic-insert-related)
 ```
 
 ### Via use-package (If you have straight.el integration)
@@ -50,9 +50,10 @@ ollama pull nomic-embed-text
   :straight (:host github :repo "dcruver/org-roam-semantic")
   :after org-roam
   :config
-  (setq my/ollama-base-url "http://localhost:11434")
-  :bind (("C-c v s" . my/search-notes-by-concept)
-         ("C-c v i" . my/insert-similar-notes)))
+  (setq org-roam-semantic-ollama-url "http://localhost:11434")
+  :bind (("C-c v s" . org-roam-semantic-search)
+         ("C-c v i" . org-roam-semantic-insert-similar)
+         ("C-c v r" . org-roam-semantic-insert-related)))
 ```
 
 ### Manual Installation
@@ -72,47 +73,47 @@ git clone https://github.com/dcruver/org-roam-semantic.git
 
 ```elisp
 ;; Ollama server URL (default: http://localhost:11434)
-(setq my/ollama-base-url "http://localhost:11434")
+(setq org-roam-semantic-ollama-url "http://localhost:11434")
 
 ;; Embedding model (default: nomic-embed-text)
-(setq my/embedding-model "nomic-embed-text")
+(setq org-roam-semantic-embedding-model "nomic-embed-text")
 
 ;; Text generation model for AI features (default: llama3.1:8b)
-(setq my/generation-model "llama3.1:8b")
+(setq org-roam-semantic-generation-model "llama3.1:8b")
 
 ;; Embedding dimensions - must match your model (default: 768)
-(setq my/embedding-dimensions 768)
+(setq org-roam-semantic-embedding-dimensions 768)
 ```
 
 ## Usage
 
 ### Interactive Functions
 
-#### `my/generate-embedding-for-note`
+#### `org-roam-semantic-generate-embedding`
 Generate and store an embedding for the current note. The embedding is saved as an `:EMBEDDING:` property in the note's properties drawer.
 
-#### `my/generate-embeddings-for-all-notes`
+#### `org-roam-semantic-generate-all-embeddings`
 Generate embeddings for all org-roam notes that don't already have them. Shows progress and skips notes that already have embeddings.
 
-#### `my/search-notes-by-concept`
+#### `org-roam-semantic-search`
 **Keybinding:** `C-c v s`
 
 Search for notes similar to a concept and display results in a clickable buffer. Enter a search term and get a ranked list of similar notes with similarity scores.
 
-#### `my/insert-similar-notes`  
+#### `org-roam-semantic-insert-similar`  
 **Keybinding:** `C-c v i`
 
 Find notes similar to the current note and insert org-roam links at point. Useful for building connections between related notes.
 
-#### `my/insert-related-notes`
+#### `org-roam-semantic-insert-related`
 **Keybinding:** `C-c v r`
 
 Search for notes related to a specific concept and insert org-roam links at point. Prompts for a search term, then inserts links to related notes.
 
-#### `my/vector-search-status`
+#### `org-roam-semantic-status`
 Display the current status of vector embeddings in your knowledge base, including coverage percentage and notes without embeddings.
 
-#### `my/debug-embedding`
+#### `org-roam-semantic-debug-embedding`
 Debug the embedding for a specific file. Shows embedding dimensions and first few values for troubleshooting.
 
 ## Key Bindings
@@ -125,21 +126,30 @@ The following key bindings are set up automatically:
 
 ## Workflow
 
-1. **Initial setup**: Run `my/generate-embeddings-for-all-notes` to create embeddings for existing notes
+1. **Initial setup**: Run `org-roam-semantic-generate-all-embeddings` to create embeddings for existing notes
 2. **Daily use**: New notes get embeddings automatically when saved
 3. **Discovery**: Use `C-c v s` to explore conceptual connections in your knowledge base
 4. **Linking**: Use `C-c v i` to quickly add related note links
 
+## Automatic Embedding Generation
+
+Embeddings are automatically generated and updated when you save org-roam files, thanks to the `before-save-hook` integration. This means:
+
+- New notes get embeddings when first saved
+- Modified notes get updated embeddings
+- No manual intervention needed for day-to-day use
+
 ## Troubleshooting
 
 ### "No similar notes found"
-- Check that embeddings exist: `M-x my/vector-search-status`
+- Check that embeddings exist: `M-x org-roam-semantic-status`
 - Verify Ollama is running: `curl http://localhost:11434/api/tags`
-- Generate missing embeddings: `M-x my/generate-embeddings-for-all-notes`
+- Generate missing embeddings: `M-x org-roam-semantic-generate-all-embeddings`
 
 ### "Error calling Ollama"
 - Confirm Ollama server URL in configuration
 - Check that the embedding model is installed: `ollama list`
+- Pull the required model: `ollama pull nomic-embed-text`
 
 ### Poor similarity results
 - Try different search terms (more specific or more general)
@@ -148,7 +158,16 @@ The following key bindings are set up automatically:
 
 ## Integration
 
-This package provides functions used by `org-roam-ai-assistant` and can be integrated with external tools via the org-to-markdown export functions.
+This package provides functions used by other org-roam extensions and can be integrated with external tools via:
+
+- `org-roam-semantic-get-similar-data` - Programmatic access to similarity search results
+- Org-to-markdown export functions for external processing
+- JSON-compatible data structures for API integration
+
+## Data Functions for External Use
+
+### `org-roam-semantic-get-similar-data`
+Returns similarity data as a list of `(file similarity-score)` pairs, suitable for programmatic use by other functions or external tools.
 
 ## License
 
