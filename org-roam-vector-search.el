@@ -348,11 +348,22 @@ Does NOT call `save-buffer` (so it is safe in save hooks)."
         (org-with-wide-buffer
           (goto-char (or position (point-min)))
           (if (and position (not (= position (point-min))))
-              ;; Store at heading level
+              ;; Store at heading level - find heading by position
               (progn
-                ;; Ensure we're at a heading
+                ;; If not exactly at a heading, try to find the nearest one
                 (unless (looking-at "^\\*")
-                  (error "Position %d is not at a heading" position))
+                  (beginning-of-line)
+                  (unless (looking-at "^\\*")
+                    ;; If still not at heading, search for the heading that contains this position
+                    (goto-char (point-min))
+                    (let ((found nil))
+                      (while (and (not found) (re-search-forward "^\\*" nil t))
+                        (beginning-of-line)
+                        (when (>= position (point))
+                          (setq found (point))))
+                      (if found
+                          (goto-char found)
+                        (error "Cannot find heading for position %d" position)))))
                 ;; Ensure heading has an ID
                 (unless (org-entry-get (point) "ID")
                   (org-entry-put (point) "ID" (org-roam-semantic--generate-chunk-id)))
