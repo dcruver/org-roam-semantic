@@ -69,11 +69,31 @@ Change this only if you switch embedding models."
   :type 'integer
   :group 'org-roam-vector-search)
 
+(defcustom org-roam-semantic-enable-chunking nil
+  "Enable section-level chunking for more granular embeddings.
+When enabled, generates embeddings for individual sections and subsections
+in addition to file-level embeddings."
+  :type 'boolean
+  :group 'org-roam-vector-search)
+
+(defcustom org-roam-semantic-min-chunk-size 100
+  "Minimum word count for a section to get its own embedding.
+Sections smaller than this will not have embeddings generated."
+  :type 'integer
+  :group 'org-roam-vector-search)
+
+(defcustom org-roam-semantic-max-chunk-size 1000
+  "Maximum word count for a single chunk.
+Sections longer than this will be split into smaller chunks."
+  :type 'integer
+  :group 'org-roam-vector-search)
+
 ;;; Utility Functions
 
-(defun org-roam-semantic-get-similar-data (query-text &optional limit)
-  "Get similarity data programmatically (returns list of (file similarity) pairs).
-This is a non-interactive version of org-roam-semantic-find-similar for use by other functions."
+(defun org-roam-semantic-get-similar-data (query-text &optional limit chunk-level)
+  "Get similarity data programmatically.
+Returns list of (file similarity [position heading-text]) tuples.
+If CHUNK-LEVEL is non-nil and chunking is enabled, searches chunks instead of whole files."
   (let ((limit (or limit 10))
         (similarities '()))
     ;; Generate embedding for query
@@ -82,11 +102,22 @@ This is a non-interactive version of org-roam-semantic-find-similar for use by o
           (progn
             ;; Compare with all notes that have embeddings
             (dolist (file (org-roam-list-files))
-              (let ((note-embedding (org-roam-semantic--get-embedding file)))
-                (when note-embedding
-                  (let ((similarity (org-roam-semantic--cosine-similarity query-embedding note-embedding)))
-                    (when similarity
-                      (push (list file similarity) similarities))))))
+              (if (and chunk-level org-roam-semantic-enable-chunking)
+                  ;; Search chunks within file
+                  (let ((all-embeddings (org-roam-semantic--get-all-embeddings file)))
+                    (dolist (chunk all-embeddings)
+                      (let* ((position (nth 0 chunk))
+                             (heading-text (nth 1 chunk))
+                             (embedding (nth 2 chunk))
+                             (similarity (org-roam-semantic--cosine-similarity query-embedding embedding)))
+                        (when similarity
+                          (push (list file similarity position heading-text) similarities)))))
+                ;; Search file-level embeddings
+                (let ((note-embedding (org-roam-semantic--get-embedding file)))
+                  (when note-embedding
+                    (let ((similarity (org-roam-semantic--cosine-similarity query-embedding note-embedding)))
+                      (when similarity
+                        (push (list file similarity) similarities)))))))
             ;; Sort by similarity and take top results
             (setq similarities (sort similarities (lambda (a b) (> (cadr a) (cadr b)))))
             (if (> (length similarities) limit)
@@ -170,6 +201,86 @@ This is a non-interactive version of org-roam-semantic-find-similar for use by o
      (message "Error in cosine similarity calculation: %s" err)
      nil)))
 
+;;; Chunking Functions
+
+(defun org-roam-semantic--count-words (text)
+  "Count words in TEXT."
+  (length (split-string (org-roam-semantic--normalize-text text) "\\s-+" t)))
+
+(defun org-roam-semantic--generate-chunk-id ()
+  "Generate a unique ID for a chunk."
+  (org-id-new))
+
+(defun org-roam-semantic--parse-chunks (file)
+  "Parse FILE and return list of chunks with metadata.
+Returns list of (position heading-text content word-count level)."
+  (with-temp-buffer
+    (insert-file-contents file)
+    (org-mode)
+    (let ((chunks '())
+          (file-title nil))
+
+      ;; Get file title for file-level chunk
+      (goto-char (point-min))
+      (when (re-search-forward "^#\\+title:\\s-*\\(.+\\)$" nil t)
+        (setq file-title (match-string 1)))
+
+      ;; Parse all headings
+      (goto-char (point-min))
+      (while (re-search-forward "^\\(\\*+\\)\\s-+\\(.+\\)$" nil t)
+        (let* ((level (length (match-string 1)))
+               (heading-text (match-string 2))
+               (heading-pos (match-beginning 0))
+               (content-start (progn (forward-line 1) (point)))
+               (content-end (progn
+                              ;; Find next heading at same or higher level, or end of buffer
+                              (if (re-search-forward (format "^\\*\\{1,%d\\}\\s-" level) nil t)
+                                  (match-beginning 0)
+                                (point-max))))
+               (content (buffer-substring-no-properties content-start content-end))
+               (full-content (concat heading-text ". " content))
+               (word-count (org-roam-semantic--count-words full-content)))
+
+          ;; Only include chunks that meet minimum size requirement
+          (when (>= word-count org-roam-semantic-min-chunk-size)
+            (push (list heading-pos heading-text full-content word-count level) chunks))))
+
+      ;; Add file-level chunk if it would be meaningful
+      (let* ((file-content (org-roam-semantic--get-content file))
+             (file-word-count (when file-content (org-roam-semantic--count-words file-content))))
+        (when (and file-content
+                   (>= file-word-count org-roam-semantic-min-chunk-size)
+                   ;; Only add file-level if there are no section chunks or it's significantly larger
+                   (or (null chunks)
+                       (> file-word-count (* 1.5 (apply 'max (mapcar #'fourth chunks))))))
+          (push (list (point-min) (or file-title "File") file-content file-word-count 0) chunks)))
+
+      (nreverse chunks))))
+
+(defun org-roam-semantic--get-chunk-content (file position)
+  "Get the content for a chunk at POSITION in FILE."
+  (with-temp-buffer
+    (insert-file-contents file)
+    (org-mode)
+    (goto-char position)
+    (if (= position (point-min))
+        ;; File-level chunk
+        (org-roam-semantic--get-content file)
+      ;; Section-level chunk
+      (let* ((level (save-excursion
+                      (when (looking-at "^\\(\\*+\\)")
+                        (length (match-string 1)))))
+             (heading-text (save-excursion
+                             (when (looking-at "^\\*+\\s-+\\(.+\\)$")
+                               (match-string 1))))
+             (content-start (progn (forward-line 1) (point)))
+             (content-end (progn
+                            (if (re-search-forward (format "^\\*\\{1,%d\\}\\s-" level) nil t)
+                                (match-beginning 0)
+                              (point-max))))
+             (content (buffer-substring-no-properties content-start content-end)))
+        (concat heading-text ". " content)))))
+
 ;;; Ollama API Functions
 
 (defun org-roam-ai-generate-embedding (text)
@@ -224,30 +335,54 @@ This is a non-interactive version of org-roam-semantic-find-similar for use by o
        nil))))
 
 ;;; Embedding Storage and Retrieval
-(defun org-roam-semantic--store-embedding (file embedding)
-  "Store EMBEDDING vector in FILE's **file-level** PROPERTIES drawer.
+(defun org-roam-semantic--store-embedding (file embedding &optional position)
+  "Store EMBEDDING vector in FILE at POSITION.
+If POSITION is nil or (point-min), stores at file level.
+Otherwise stores at the heading at POSITION.
 Does NOT call `save-buffer` (so it is safe in save hooks)."
   (when embedding
     (with-current-buffer (find-file-noselect file)
       (require 'org)
       (save-excursion
         (org-with-wide-buffer
-          (goto-char (point-min))
-          ;; Ensure a file-level property drawer exists
-          (unless (org-get-property-block) (org-insert-property-drawer))
-          ;; Replace the property value at the file level
-          (org-entry-put (point) "EMBEDDING"
-                         (mapconcat (lambda (x) (format "%.6f" x)) embedding " ")))
+          (goto-char (or position (point-min)))
+          (if (and position (not (= position (point-min))))
+              ;; Store at heading level
+              (progn
+                ;; Ensure we're at a heading
+                (unless (looking-at "^\\*")
+                  (error "Position %d is not at a heading" position))
+                ;; Ensure heading has an ID
+                (unless (org-entry-get (point) "ID")
+                  (org-entry-put (point) "ID" (org-roam-semantic--generate-chunk-id)))
+                ;; Store embedding
+                (org-entry-put (point) "EMBEDDING"
+                               (mapconcat (lambda (x) (format "%.6f" x)) embedding " ")))
+            ;; Store at file level
+            (progn
+              (goto-char (point-min))
+              ;; Ensure a file-level property drawer exists
+              (unless (org-get-property-block) (org-insert-property-drawer))
+              ;; Replace the property value at the file level
+              (org-entry-put (point) "EMBEDDING"
+                             (mapconcat (lambda (x) (format "%.6f" x)) embedding " "))))))
       ;; IMPORTANT: do NOT call (save-buffer) here
-      ))))
+      )))
 
-(defun org-roam-semantic--get-embedding (file)
-  "Retrieve embedding vector from note's properties."
+(defun org-roam-semantic--get-embedding (file &optional position)
+  "Retrieve embedding vector from FILE at POSITION.
+If POSITION is nil, gets file-level embedding.
+If POSITION is specified, gets embedding from heading at that position."
   (with-temp-buffer
     (insert-file-contents file)
     (org-mode)
-    (goto-char (point-min))
-    (when (re-search-forward "^[ \t]*:EMBEDDING:[ \t]*\\(.*\\)$" nil t)
+    (goto-char (or position (point-min)))
+    (when (re-search-forward "^[ \t]*:EMBEDDING:[ \t]*\\(.*\\)$"
+                             (if position
+                                 (save-excursion
+                                   (forward-line 10) ; Look within property drawer
+                                   (point))
+                               nil) t)
       (let ((embedding-str (match-string 1)))
         (when (and embedding-str (not (string-empty-p embedding-str)))
           (condition-case err
@@ -255,6 +390,55 @@ Does NOT call `save-buffer` (so it is safe in save hooks)."
             (error
              (message "Error parsing embedding in %s: %s" (file-name-nondirectory file) err)
              nil)))))))
+
+(defun org-roam-semantic--get-all-embeddings (file)
+  "Retrieve all embeddings from FILE.
+Returns list of (position heading-text embedding) tuples."
+  (with-temp-buffer
+    (insert-file-contents file)
+    (org-mode)
+    (let ((embeddings '())
+          (file-title nil))
+
+      ;; Get file title
+      (goto-char (point-min))
+      (when (re-search-forward "^#\\+title:\\s-*\\(.+\\)$" nil t)
+        (setq file-title (match-string 1)))
+
+      ;; Check for file-level embedding
+      (goto-char (point-min))
+      (when (re-search-forward "^[ \t]*:EMBEDDING:[ \t]*\\(.*\\)$" nil t)
+        (let ((embedding-str (match-string 1)))
+          (when (and embedding-str (not (string-empty-p embedding-str)))
+            (condition-case err
+                (let ((embedding (mapcar 'string-to-number (split-string embedding-str))))
+                  (push (list (point-min) (or file-title "File") embedding) embeddings))
+              (error
+               (message "Error parsing file-level embedding: %s" err))))))
+
+      ;; Find all heading-level embeddings
+      (goto-char (point-min))
+      (while (re-search-forward "^\\(\\*+\\)\\s-+\\(.+\\)$" nil t)
+        (let* ((heading-pos (match-beginning 0))
+               (heading-text (match-string 2))
+               (property-end (save-excursion
+                               (forward-line 1)
+                               (when (looking-at "^[ \t]*:PROPERTIES:")
+                                 (re-search-forward "^[ \t]*:END:" nil t)
+                                 (point)))))
+          (when property-end
+            (save-excursion
+              (goto-char heading-pos)
+              (when (re-search-forward "^[ \t]*:EMBEDDING:[ \t]*\\(.*\\)$" property-end t)
+                (let ((embedding-str (match-string 1)))
+                  (when (and embedding-str (not (string-empty-p embedding-str)))
+                    (condition-case err
+                        (let ((embedding (mapcar 'string-to-number (split-string embedding-str))))
+                          (push (list heading-pos heading-text embedding) embeddings))
+                      (error
+                       (message "Error parsing embedding for %s: %s" heading-text err))))))))))
+
+      (nreverse embeddings))))
 
 (defun org-roam-semantic--has-embedding-p (file)
   "Check if note already has an embedding."
@@ -285,6 +469,42 @@ Does NOT call `save-buffer` (so it is safe in save hooks)."
               (message "Failed to generate embedding for %s"
                      (file-name-nondirectory file)))))
       (message "No content found in %s" (file-name-nondirectory file)))))
+
+;;;###autoload
+(defun org-roam-semantic-generate-chunks-for-file (file)
+  "Generate embeddings for all chunks in FILE."
+  (interactive (list (buffer-file-name)))
+  (unless file
+    (error "No file associated with current buffer"))
+  (unless org-roam-semantic-enable-chunking
+    (error "Chunking is not enabled. Set org-roam-semantic-enable-chunking to t"))
+
+  (let* ((chunks (org-roam-semantic--parse-chunks file))
+         (total (length chunks))
+         (processed 0)
+         (skipped 0))
+    (message "Generating embeddings for %d chunks in %s..." total (file-name-nondirectory file))
+
+    (dolist (chunk chunks)
+      (let* ((position (nth 0 chunk))
+             (heading-text (nth 1 chunk))
+             (content (nth 2 chunk))
+             (existing-embedding (org-roam-semantic--get-embedding file position)))
+
+        (if existing-embedding
+            (progn
+              (cl-incf skipped)
+              (message "Skipping %s (already has embedding) [%d/%d]" heading-text (+ processed skipped) total))
+          (progn
+            (cl-incf processed)
+            (message "Processing %s [%d/%d]..." heading-text (+ processed skipped) total)
+            (let ((embedding (org-roam-ai-generate-embedding content)))
+              (if embedding
+                  (org-roam-semantic--store-embedding file embedding position)
+                (message "Failed to generate embedding for %s" heading-text)))))))
+
+    (message "Chunk embedding generation complete for %s: %d processed, %d skipped"
+             (file-name-nondirectory file) processed skipped)))
 
 ;;;###autoload
 (defun org-roam-semantic-generate-all-embeddings ()
@@ -318,6 +538,50 @@ Does NOT call `save-buffer` (so it is safe in save hooks)."
     (message "Embedding generation complete: %d processed, %d skipped"
            processed skipped)))
 
+;;;###autoload
+(defun org-roam-semantic-generate-all-chunks ()
+  "Generate chunk embeddings for all org-roam notes."
+  (interactive)
+  (unless org-roam-semantic-enable-chunking
+    (error "Chunking is not enabled. Set org-roam-semantic-enable-chunking to t"))
+
+  (let* ((files (org-roam-list-files))
+         (total-files (length files))
+         (file-count 0)
+         (total-chunks 0)
+         (processed-chunks 0)
+         (skipped-chunks 0))
+
+    (message "Starting chunk embedding generation for %d files..." total-files)
+
+    (dolist (file files)
+      (cl-incf file-count)
+      (message "Processing file %d/%d: %s" file-count total-files (file-name-nondirectory file))
+
+      (let* ((chunks (org-roam-semantic--parse-chunks file))
+             (file-chunk-count (length chunks)))
+        (cl-incf total-chunks file-chunk-count)
+
+        (dolist (chunk chunks)
+          (let* ((position (nth 0 chunk))
+                 (heading-text (nth 1 chunk))
+                 (content (nth 2 chunk))
+                 (existing-embedding (org-roam-semantic--get-embedding file position)))
+
+            (if existing-embedding
+                (cl-incf skipped-chunks)
+              (progn
+                (message "  Generating embedding for: %s" heading-text)
+                (let ((embedding (org-roam-ai-generate-embedding content)))
+                  (if embedding
+                      (progn
+                        (org-roam-semantic--store-embedding file embedding position)
+                        (cl-incf processed-chunks))
+                    (message "  Failed to generate embedding for: %s" heading-text)))))))))
+
+    (message "Chunk embedding generation complete: %d files processed, %d chunks total, %d processed, %d skipped"
+             total-files total-chunks processed-chunks skipped-chunks)))
+
 ;;; Vector Search Functions
 
 (defun org-roam-semantic--get-title (file)
@@ -342,37 +606,55 @@ Does NOT call `save-buffer` (so it is safe in save hooks)."
     (error nil)))
 
 ;;;###autoload
-(defun org-roam-semantic-find-similar (query-text &optional limit)
-  "Find notes similar to the query text and display in a results buffer with clickable links."
+(defun org-roam-semantic-find-similar (query-text &optional limit chunk-level)
+  "Find notes similar to the query text and display in a results buffer with clickable links.
+If CHUNK-LEVEL is non-nil, searches chunks instead of whole files."
   (interactive "sSearch for concept: ")
-  (let ((similarities (org-roam-semantic-get-similar-data query-text (or limit 10))))
+  (let ((similarities (org-roam-semantic-get-similar-data query-text (or limit 10) chunk-level)))
     (if similarities
-        (with-current-buffer (get-buffer-create "*Similar Notes*")
+        (with-current-buffer (get-buffer-create (if chunk-level "*Similar Chunks*" "*Similar Notes*"))
           (erase-buffer)
           (org-mode) ; Enable org-mode for clickable links
-          (insert (format "* Similar notes for: %s\n\n" query-text))
+          (insert (format "* Similar %s for: %s\n\n"
+                         (if chunk-level "chunks" "notes") query-text))
           (insert "Click links to open notes, or copy the org-roam links below:\n\n")
 
           (dolist (result similarities)
             (let* ((file (car result))
                    (similarity (cadr result))
+                   (position (when chunk-level (nth 2 result)))
+                   (heading-text (when chunk-level (nth 3 result)))
                    (title (org-roam-semantic--get-title file))
                    (node-id (org-roam-semantic--get-node-id file)))
-              ;; Insert clickable file link and copyable org-roam link
-              (insert (format "** %.3f - [[file:%s][%s]]\n" similarity file title))
-              (when node-id
-                (insert (format "   Org-roam link: =[[id:%s][%s]]=\n" node-id title)))
+
+              (if chunk-level
+                  ;; Chunk result
+                  (progn
+                    (insert (format "** %.3f - [[file:%s::%s][%s > %s]]\n"
+                                   similarity file
+                                   (if (= position (point-min)) title heading-text)
+                                   title heading-text))
+                    (when node-id
+                      (insert (format "   Org-roam link: =[[id:%s][%s]]=\n" node-id title))))
+                ;; File result
+                (progn
+                  (insert (format "** %.3f - [[file:%s][%s]]\n" similarity file title))
+                  (when node-id
+                    (insert (format "   Org-roam link: =[[id:%s][%s]]=\n" node-id title)))))
               (insert "\n")))
 
           (insert "\n** Usage:\n")
           (insert "- Click file links to open notes\n")
+          (when chunk-level
+            (insert "- File links will jump to the specific section\n"))
           (insert "- Copy org-roam links (the =[[id:...]]= parts) to insert elsewhere\n")
           (insert "- Use C-c C-c on org-roam links to follow them\n")
 
           (goto-char (point-min))
           (display-buffer (current-buffer))
-          (message "Found %d similar notes - click links to open" (length similarities)))
-      (message "No similar notes found"))))
+          (message "Found %d similar %s - click links to open"
+                  (length similarities) (if chunk-level "chunks" "notes")))
+      (message "No similar %s found" (if chunk-level "chunks" "notes")))))
 
 (defun org-roam-semantic-find-and-insert (query-text &optional limit)
   "Find similar notes and insert org-roam links into the current buffer."
@@ -400,6 +682,14 @@ Does NOT call `save-buffer` (so it is safe in save hooks)."
   "Interactive search for notes by concept - displays results buffer."
   (interactive "sConcept to search for: ")
   (org-roam-semantic-find-similar concept))
+
+;;;###autoload
+(defun org-roam-semantic-search-chunks (concept)
+  "Interactive search for note chunks by concept - displays results buffer."
+  (interactive "sConcept to search for (chunks): ")
+  (unless org-roam-semantic-enable-chunking
+    (error "Chunking is not enabled. Set org-roam-semantic-enable-chunking to t"))
+  (org-roam-semantic-find-similar concept t))
 
 ;;;###autoload
 (defun org-roam-semantic-insert-related (concept)
@@ -467,21 +757,39 @@ Does NOT call `save-buffer` (so it is safe in save hooks)."
   (let* ((all-files (org-roam-list-files))
          (total-notes (length all-files))
          (notes-with-embeddings 0)
+         (total-chunks 0)
+         (chunks-with-embeddings 0)
          (notes-without-embeddings '())
          (embedding-sizes '()))
+
     (dolist (file all-files)
-      (let ((embedding (org-roam-semantic--get-embedding file)))
-        (if embedding
+      (let ((file-embedding (org-roam-semantic--get-embedding file)))
+        (if file-embedding
             (progn
               (cl-incf notes-with-embeddings)
-              (push (length embedding) embedding-sizes))
-          (push (file-name-nondirectory file) notes-without-embeddings))))
+              (push (length file-embedding) embedding-sizes))
+          (push (file-name-nondirectory file) notes-without-embeddings)))
+
+      ;; Count chunks if chunking is enabled
+      (when org-roam-semantic-enable-chunking
+        (let ((all-embeddings (org-roam-semantic--get-all-embeddings file)))
+          (setq total-chunks (+ total-chunks (length (org-roam-semantic--parse-chunks file))))
+          (setq chunks-with-embeddings (+ chunks-with-embeddings (length all-embeddings))))))
+
     (let ((coverage (if (> total-notes 0)
                        (/ (* 100.0 notes-with-embeddings) total-notes)
                      0))
+          (chunk-coverage (if (and org-roam-semantic-enable-chunking (> total-chunks 0))
+                             (/ (* 100.0 chunks-with-embeddings) total-chunks)
+                           0))
           (unique-sizes (seq-uniq embedding-sizes)))
-      (message "Vector Search Status: %d/%d notes have embeddings (%.1f%% coverage). Embedding sizes: %s"
-               notes-with-embeddings total-notes coverage unique-sizes)
+
+      (if org-roam-semantic-enable-chunking
+          (message "Vector Search Status: %d/%d notes (%.1f%%), %d/%d chunks (%.1f%%) have embeddings. Sizes: %s"
+                   notes-with-embeddings total-notes coverage
+                   chunks-with-embeddings total-chunks chunk-coverage unique-sizes)
+        (message "Vector Search Status: %d/%d notes have embeddings (%.1f%% coverage). Embedding sizes: %s"
+                 notes-with-embeddings total-notes coverage unique-sizes))
       (when notes-without-embeddings
         (with-current-buffer (get-buffer-create "*Embedding Status*")
           (erase-buffer)
@@ -593,6 +901,11 @@ wrap contents under a synthetic top-level heading using #+title or filename."
 (global-set-key (kbd "C-c v s") 'org-roam-semantic-search)
 (global-set-key (kbd "C-c v i") 'org-roam-semantic-insert-similar)
 (global-set-key (kbd "C-c v r") 'org-roam-semantic-insert-related)
+
+;; Chunk-level search bindings
+(global-set-key (kbd "C-c v c") 'org-roam-semantic-search-chunks)
+(global-set-key (kbd "C-c v g") 'org-roam-semantic-generate-chunks-for-file)
+(global-set-key (kbd "C-c v G") 'org-roam-semantic-generate-all-chunks)
 
 (provide 'org-roam-vector-search)
 
