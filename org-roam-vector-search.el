@@ -501,7 +501,10 @@ Returns list of (position heading-text embedding) tuples."
       (let* ((position (nth 0 chunk))
              (heading-text (nth 1 chunk))
              (content (nth 2 chunk))
+             (word-count (nth 3 chunk))
              (existing-embedding (org-roam-semantic--get-embedding file position)))
+
+        (message "Debug: Chunk '%s' at position %d with %d words" heading-text position word-count)
 
         (if existing-embedding
             (progn
@@ -510,10 +513,15 @@ Returns list of (position heading-text embedding) tuples."
           (progn
             (cl-incf processed)
             (message "Processing %s [%d/%d]..." heading-text (+ processed skipped) total)
-            (let ((embedding (org-roam-ai-generate-embedding content)))
-              (if embedding
-                  (org-roam-semantic--store-embedding file embedding position)
-                (message "Failed to generate embedding for %s" heading-text)))))))
+            (condition-case err
+                (let ((embedding (org-roam-ai-generate-embedding content)))
+                  (if embedding
+                      (progn
+                        (org-roam-semantic--store-embedding file embedding position)
+                        (message "Successfully stored embedding for %s" heading-text))
+                    (message "Failed to generate embedding for %s" heading-text)))
+              (error
+               (message "Error processing %s: %s" heading-text (error-message-string err))))))))
 
     (message "Chunk embedding generation complete for %s: %d processed, %d skipped"
              (file-name-nondirectory file) processed skipped)))
