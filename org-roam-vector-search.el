@@ -13,6 +13,7 @@
 (require 'url)
 (require 'org)
 (require 'ox-md)
+(require 'cl-lib)
 
 ;;; Version
 
@@ -252,7 +253,7 @@ Returns list of (position heading-text content word-count level)."
                    (>= file-word-count org-roam-semantic-min-chunk-size)
                    ;; Only add file-level if there are no section chunks or it's significantly larger
                    (or (null chunks)
-                       (> file-word-count (* 1.5 (apply 'max (mapcar #'fourth chunks))))))
+                       (> file-word-count (* 1.5 (apply 'max (mapcar (lambda (chunk) (nth 3 chunk)) chunks))))))
           (push (list (point-min) (or file-title "File") file-content file-word-count 0) chunks)))
 
       (nreverse chunks))))
