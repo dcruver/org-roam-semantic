@@ -1,5 +1,5 @@
 ;;; org-roam-vector-search.el --- Vector embeddings and AI assistance for org-roam -*- lexical-binding: t; -*-
-;;; Version: 1.1.4
+;;; Version: 1.2.0
 ;;;
 ;;; Commentary:
 ;; This package adds vector embedding support and direct AI integration to org-roam.
@@ -17,7 +17,7 @@
 
 ;;; Version
 
-(defconst org-roam-semantic-version "1.1.4"
+(defconst org-roam-semantic-version "1.2.0"
   "Version of the org-roam-semantic package suite.")
 
 (defun org-roam-semantic-version ()
@@ -226,25 +226,45 @@ Returns list of (position heading-text content word-count level)."
       (when (re-search-forward "^#\\+title:\\s-*\\(.+\\)$" nil t)
         (setq file-title (match-string 1)))
 
-      ;; Parse all headings
+      ;; Use org-mode outline navigation instead of org-map-entries
       (goto-char (point-min))
-      (while (re-search-forward "^\\(\\*+\\)\\s-+\\(.+\\)$" nil t)
-        (let* ((level (length (match-string 1)))
-               (heading-text (match-string 2))
-               (heading-pos (match-beginning 0))
-               (content-start (progn (forward-line 1) (point)))
-               (content-end (progn
-                              ;; Find next heading at same or higher level, or end of buffer
-                              (if (re-search-forward (format "^\\*\\{1,%d\\}\\s-" level) nil t)
-                                  (match-beginning 0)
-                                (point-max))))
-               (content (buffer-substring-no-properties content-start content-end))
-               (full-content (concat heading-text ". " content))
-               (word-count (org-roam-semantic--count-words full-content)))
+      (message "Debug Parse: Starting manual heading scan...")
+      (let ((heading-count 0))
+        (while (re-search-forward "^\\*+ " nil t)
+          (save-excursion
+            (beginning-of-line)
+            (when (org-at-heading-p)
+              (cl-incf heading-count)
+              (let* ((heading-pos (point))
+                     (heading-components (org-heading-components))
+                     (heading-text (nth 4 heading-components))
+                     (level (nth 0 heading-components))
+                     (content-start (progn
+                                      (forward-line 1)
+                                      (point)))
+                     (content-end (save-excursion
+                                    (if (outline-next-heading)
+                                        (point)
+                                      (point-max))))
+                     (content (buffer-substring-no-properties content-start content-end))
+                     (full-content (concat heading-text ". " content))
+                     (word-count (org-roam-semantic--count-words full-content)))
 
-          ;; Only include chunks that meet minimum size requirement
-          (when (>= word-count org-roam-semantic-min-chunk-size)
-            (push (list heading-pos heading-text full-content word-count level) chunks))))
+                ;; Debug: Show all sections found
+                (message "Debug Parse: Found section '%s' at pos %d with %d words (level %d)"
+                         heading-text heading-pos word-count level)
+
+                ;; Include all chunks - mark those below threshold differently
+                (if (>= word-count org-roam-semantic-min-chunk-size)
+                    (progn
+                      (message "Debug Parse: INCLUDING '%s' (%d words >= %d minimum)"
+                               heading-text word-count org-roam-semantic-min-chunk-size)
+                      (push (list heading-pos heading-text full-content word-count level :embedding) chunks))
+                  (progn
+                    (message "Debug Parse: INCLUDING (ID-only) '%s' (%d words < %d minimum)"
+                             heading-text word-count org-roam-semantic-min-chunk-size)
+                    (push (list heading-pos heading-text full-content word-count level :id-only) chunks)))))))
+        (message "Debug Parse: Manual scan completed, found %d headings" heading-count))
 
       ;; Add file-level chunk if it would be meaningful
       (let* ((file-content (org-roam-semantic--get-content file))
@@ -336,40 +356,43 @@ Returns list of (position heading-text content word-count level)."
        nil))))
 
 ;;; Embedding Storage and Retrieval
-(defun org-roam-semantic--store-embedding (file embedding &optional position)
-  "Store EMBEDDING vector in FILE at POSITION.
-If POSITION is nil or (point-min), stores at file level.
-Otherwise stores at the heading at POSITION.
+(defun org-roam-semantic--store-embedding (file embedding &optional identifier)
+  "Store EMBEDDING vector in FILE at location specified by IDENTIFIER.
+If IDENTIFIER is nil, stores at file level.
+If IDENTIFIER is a string, finds heading by that text.
+If IDENTIFIER is a number, treats it as a position.
 Does NOT call `save-buffer` (so it is safe in save hooks)."
   (when embedding
     (with-current-buffer (find-file-noselect file)
       (require 'org)
       (save-excursion
         (org-with-wide-buffer
-          (goto-char (or position (point-min)))
-          (if (and position (not (= position (point-min))))
-              ;; Store at heading level - find heading by position
+          (if identifier
+              ;; Store at heading level - find heading by identifier
               (progn
-                ;; If not exactly at a heading, try to find the nearest one
-                (unless (looking-at "^\\*")
+                (cond
+                 ;; String identifier - search by heading text
+                 ((stringp identifier)
+                  (goto-char (point-min))
+                  (unless (re-search-forward (format "^\\*+\\s-+%s\\s-*$" (regexp-quote identifier)) nil t)
+                    (error "Cannot find heading with text: %s" identifier))
+                  (beginning-of-line))
+                 ;; Numeric identifier - go to position
+                 ((numberp identifier)
+                  (goto-char identifier)
                   (beginning-of-line)
                   (unless (looking-at "^\\*")
-                    ;; If still not at heading, search for the heading that contains this position
-                    (goto-char (point-min))
-                    (let ((found nil))
-                      (while (and (not found) (re-search-forward "^\\*" nil t))
-                        (beginning-of-line)
-                        (when (>= position (point))
-                          (setq found (point))))
-                      (if found
-                          (goto-char found)
-                        (error "Cannot find heading for position %d" position)))))
+                    (error "Position %d is not at a heading" identifier)))
+                 (t
+                  (error "Invalid identifier type: %s" identifier)))
                 ;; Ensure heading has an ID
                 (unless (org-entry-get (point) "ID")
                   (org-entry-put (point) "ID" (org-roam-semantic--generate-chunk-id)))
                 ;; Store embedding
                 (org-entry-put (point) "EMBEDDING"
-                               (mapconcat (lambda (x) (format "%.6f" x)) embedding " ")))
+                               (mapconcat (lambda (x) (format "%.6f" x)) embedding " "))
+                ;; Mark buffer as modified to ensure save hooks trigger
+                (set-buffer-modified-p t))
             ;; Store at file level
             (progn
               (goto-char (point-min))
@@ -377,9 +400,28 @@ Does NOT call `save-buffer` (so it is safe in save hooks)."
               (unless (org-get-property-block) (org-insert-property-drawer))
               ;; Replace the property value at the file level
               (org-entry-put (point) "EMBEDDING"
-                             (mapconcat (lambda (x) (format "%.6f" x)) embedding " "))))))
+                             (mapconcat (lambda (x) (format "%.6f" x)) embedding " "))
+              ;; Mark buffer as modified to ensure save hooks trigger
+              (set-buffer-modified-p t))))
       ;; IMPORTANT: do NOT call (save-buffer) here
-      )))
+      ))))
+
+(defun org-roam-semantic--ensure-heading-id (file heading-text)
+  "Ensure HEADING-TEXT in FILE has an ID property, even without embedding.
+This allows short sections to get IDs for future expansion."
+  (with-current-buffer (find-file-noselect file)
+    (require 'org)
+    (save-excursion
+      (org-with-wide-buffer
+        (goto-char (point-min))
+        (when (re-search-forward (format "^\\*+\\s-+%s\\s-*$" (regexp-quote heading-text)) nil t)
+          (beginning-of-line)
+          ;; Only add ID if one doesn't exist
+          (unless (org-entry-get (point) "ID")
+            (org-entry-put (point) "ID" (org-roam-semantic--generate-chunk-id))
+            (message "Added ID to short section: %s" heading-text)
+            ;; Mark buffer as modified
+            (set-buffer-modified-p t)))))))
 
 (defun org-roam-semantic--get-embedding (file &optional position)
   "Retrieve embedding vector from FILE at POSITION.
@@ -502,26 +544,37 @@ Returns list of (position heading-text embedding) tuples."
              (heading-text (nth 1 chunk))
              (content (nth 2 chunk))
              (word-count (nth 3 chunk))
+             (level (nth 4 chunk))
+             (chunk-type (nth 5 chunk))
              (existing-embedding (org-roam-semantic--get-embedding file position)))
 
-        (message "Debug: Chunk '%s' at position %d with %d words" heading-text position word-count)
+        (message "Debug: Chunk '%s' at position %d with %d words (type: %s)" heading-text position word-count chunk-type)
 
-        (if existing-embedding
-            (progn
-              (cl-incf skipped)
-              (message "Skipping %s (already has embedding) [%d/%d]" heading-text (+ processed skipped) total))
-          (progn
-            (cl-incf processed)
-            (message "Processing %s [%d/%d]..." heading-text (+ processed skipped) total)
-            (condition-case err
-                (let ((embedding (org-roam-ai-generate-embedding content)))
-                  (if embedding
-                      (progn
-                        (org-roam-semantic--store-embedding file embedding position)
-                        (message "Successfully stored embedding for %s" heading-text))
-                    (message "Failed to generate embedding for %s" heading-text)))
-              (error
-               (message "Error processing %s: %s" heading-text (error-message-string err))))))))
+        (cond
+         ;; ID-only chunks - just ensure they have an ID
+         ((eq chunk-type :id-only)
+          (org-roam-semantic--ensure-heading-id file heading-text)
+          (cl-incf processed)
+          (message "Added ID to short section: %s [%d/%d]" heading-text (+ processed skipped) total))
+
+         ;; Embedding chunks - check if already has embedding
+         (existing-embedding
+          (cl-incf skipped)
+          (message "Skipping %s (already has embedding) [%d/%d]" heading-text (+ processed skipped) total))
+
+         ;; Embedding chunks without embeddings - generate them
+         (t
+          (cl-incf processed)
+          (message "Processing %s [%d/%d]..." heading-text (+ processed skipped) total)
+          (condition-case err
+              (let ((embedding (org-roam-ai-generate-embedding content)))
+                (if embedding
+                    (progn
+                      (org-roam-semantic--store-embedding file embedding heading-text)
+                      (message "Successfully stored embedding for %s" heading-text))
+                  (message "Failed to generate embedding for %s" heading-text)))
+            (error
+             (message "Error processing %s: %s" heading-text (error-message-string err))))))))
 
     (message "Chunk embedding generation complete for %s: %d processed, %d skipped"
              (file-name-nondirectory file) processed skipped)))
@@ -595,7 +648,7 @@ Returns list of (position heading-text embedding) tuples."
                 (let ((embedding (org-roam-ai-generate-embedding content)))
                   (if embedding
                       (progn
-                        (org-roam-semantic--store-embedding file embedding position)
+                        (org-roam-semantic--store-embedding file embedding heading-text)
                         (cl-incf processed-chunks))
                     (message "  Failed to generate embedding for: %s" heading-text)))))))))
 
@@ -911,7 +964,11 @@ wrap contents under a synthetic top-level heading using #+title or filename."
     (when (and (derived-mode-p 'org-mode)
                (buffer-file-name)
                (org-roam-file-p))
-      (org-roam-semantic-generate-embedding (buffer-file-name)))))
+      (if org-roam-semantic-enable-chunking
+          ;; Use chunking if enabled
+          (org-roam-semantic-generate-chunks-for-file (buffer-file-name))
+        ;; Otherwise use file-level embedding
+        (org-roam-semantic-generate-embedding (buffer-file-name))))))
 
 ;; Add the hook
 (add-hook 'before-save-hook 'org-roam-semantic--update-on-save)

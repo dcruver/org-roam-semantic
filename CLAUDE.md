@@ -187,14 +187,42 @@ The package uses a hierarchical key binding system:
 (require 'json)        ; JSON handling for API calls
 (require 'url)         ; HTTP requests to Ollama
 (require 'ox-md)       ; Org to markdown conversion
+(require 'cl-lib)      ; Common Lisp extensions (for chunking compatibility)
 
 ;; Load the packages
 (require 'org-roam-vector-search)
 (require 'org-roam-ai-assistant)
 ```
 
+## Troubleshooting
+
+### Common Issues
+
+1. **"Symbols function definition is void: fourth" error**
+   - **Cause**: Missing cl-lib dependency
+   - **Fix**: Ensure `(require 'cl-lib)` is loaded before the package
+
+2. **"position X is not at a heading" error**
+   - **Cause**: Position tracking issues during chunk parsing
+   - **Fix**: The code includes fallback logic to find nearest headings
+   - **Debug**: Check file for malformed org headings or unusual formatting
+
+3. **Multi-heading processing issues**
+   - **Symptoms**: Only first heading gets embeddings
+   - **Debug**: Enable debug messages in `org-roam-semantic-generate-chunks-for-file`
+   - **Common causes**: Headings below word count threshold, malformed org structure
+
+### Debugging Chunking Issues
+
+The chunking system includes detailed debug logging. When experiencing issues:
+
+1. **Enable debugging**: Debug messages are built into chunk generation functions
+2. **Check output**: Look for "Debug: Chunk 'X' at position Y with Z words" messages
+3. **Verify structure**: Ensure org headings are properly formatted with asterisks and spaces
+4. **Word count**: Check if sections meet minimum word count requirements
+
 ## Version Information
 
-Current version: 1.1.4
+Current version: 1.2.0
 - Check version: `M-x org-roam-semantic-version`
 - Both modules share version numbering
