@@ -12,9 +12,11 @@ org-roam-semantic is an Emacs Lisp package that adds AI-powered semantic search 
 
 1. **org-roam-vector-search.el** - The semantic search engine
    - Vector embedding generation and storage using Ollama API
-   - Cosine similarity search for finding related notes
+   - Dual-mode operation: file-level and section-level (chunking) embeddings
+   - Cosine similarity search for finding related notes and sections
    - Embedding storage as org-mode properties in note files
-   - Automatic embedding generation hooks
+   - Intelligent ID assignment for all headings (including short sections)
+   - Automatic embedding generation hooks with chunking support
 
 2. **org-roam-ai-assistant.el** - The AI enhancement system
    - Context-aware AI assistance using related notes
@@ -29,10 +31,22 @@ org-roam-semantic is an Emacs Lisp package that adds AI-powered semantic search 
 
 ### Data Flow
 
-1. Notes are processed to generate vector embeddings via Ollama API
-2. Embeddings stored as `:EMBEDDING:` properties in org files
-3. Similarity search uses cosine distance between vectors
-4. AI assistant retrieves similar notes as context for enhanced responses
+**File-Level Mode (default):**
+1. Entire notes processed to generate vector embeddings via Ollama API
+2. Embeddings stored as `:EMBEDDING:` properties in org file headers
+3. Similarity search uses cosine distance between file-level vectors
+
+**Section-Level Mode (chunking enabled):**
+1. Individual sections parsed from org headings with content
+2. Sections meeting word threshold get vector embeddings via Ollama API
+3. Short sections (<50 words) get ID-only property blocks for future expansion
+4. Embeddings stored as `:EMBEDDING:` properties in section headers
+5. Robust heading-text-based storage prevents position conflicts
+6. Similarity search operates on section-level vectors for fine-grained matching
+
+**AI Integration:**
+- AI assistant retrieves similar notes/sections as context for enhanced responses
+- Save hooks automatically generate appropriate embeddings based on configuration
 
 ## Development Commands
 
@@ -88,8 +102,33 @@ M-x org-roam-semantic-version       ; Current version info
 
 1. **Enable Chunking**: `(setq org-roam-semantic-enable-chunking t)`
 2. **Generate Chunks**: Use `C-c v g` in a file or `C-c v G` for all files
-3. **Test Chunk Search**: Use `C-c v c` to search within sections
-4. **Check Status**: Use `M-x org-roam-semantic-status` to see chunk coverage
+3. **Verify Results**: Check that both content-rich and short sections get property blocks
+   - Content-rich sections: `:ID:` + `:EMBEDDING:` properties
+   - Short sections: `:ID:`-only properties for future expansion
+4. **Test Chunk Search**: Use `C-c v c` to search within sections
+5. **Test Save Hook**: Edit and save file to verify automatic chunk generation
+6. **Check Status**: Use `M-x org-roam-semantic-status` to see chunk coverage
+
+### Configuration Examples
+
+**Basic Chunking Setup:**
+```elisp
+;; Enable section-level embeddings
+(setq org-roam-semantic-enable-chunking t)
+
+;; Adjust thresholds (optional)
+(setq org-roam-semantic-min-chunk-size 50)  ; Minimum words for embeddings
+(setq org-roam-semantic-max-chunk-size 1000) ; Maximum words per chunk
+```
+
+**File vs. Chunking Mode:**
+```elisp
+;; File-level embeddings (default)
+(setq org-roam-semantic-enable-chunking nil)
+
+;; Section-level embeddings
+(setq org-roam-semantic-enable-chunking t)
+```
 
 ## Configuration Variables
 
@@ -101,8 +140,13 @@ M-x org-roam-semantic-version       ; Current version info
 
 ### Chunking Settings
 - `org-roam-semantic-enable-chunking` - Enable section-level chunking (default: nil)
-- `org-roam-semantic-min-chunk-size` - Minimum words for chunk embedding (default: 100)
+- `org-roam-semantic-min-chunk-size` - Minimum words for chunk embedding (default: 50)
 - `org-roam-semantic-max-chunk-size` - Maximum words per chunk (default: 1000)
+
+**Chunking Behavior:**
+- **Above threshold**: Sections get full embedding + ID property blocks
+- **Below threshold**: Sections get ID-only property blocks for future expansion
+- **All headings**: Receive org-roam IDs for linking and navigation
 
 ### AI Assistant Settings
 - `org-roam-ai-default-model` - Default AI model
@@ -134,8 +178,12 @@ The package uses a hierarchical key binding system:
 ### Embedding Storage Architecture
 - **Storage Format**: Embeddings stored as JSON arrays in `:EMBEDDING:` org property
 - **File Integration**: No external database - embeddings live within org files
-- **Multi-level Support**: File-level and section-level embeddings using same property
-- **Chunking Strategy**: Sections get unique IDs and individual embeddings when enabled
+- **Multi-level Support**: File-level and section-level embeddings using same property format
+- **Dual Processing Strategy**:
+  - **Content-rich sections** (≥50 words): Get both `:ID:` and `:EMBEDDING:` properties
+  - **Short sections** (<50 words): Get `:ID:`-only property blocks for future expansion
+- **Robust Identifier System**: Uses heading text instead of fragile character positions
+- **Future-Proof Design**: Short sections can seamlessly receive embeddings when expanded
 - **Content Processing**: Safe org-to-markdown conversion for API calls
 - **Normalization**: Automatic whitespace and formatting cleanup
 
@@ -147,7 +195,9 @@ The package uses a hierarchical key binding system:
 
 ### Error Handling Strategy
 - **Network Resilience**: API failures handled without breaking workflows
-- **Diagnostics**: Comprehensive status functions for troubleshooting
+- **Position Robustness**: Heading-text-based storage prevents file modification conflicts
+- **Graceful Degradation**: Short sections get IDs even without embeddings
+- **Diagnostics**: Comprehensive status functions and debug output for troubleshooting
 - **Fallback Behavior**: Operations continue even when AI features are unavailable
 - **User Feedback**: Clear error messages and system status reporting
 
@@ -156,6 +206,27 @@ The package uses a hierarchical key binding system:
 - **Memory-Based Search**: Cosine similarity computed in-memory for speed
 - **Context Management**: Configurable limits prevent AI context overflow
 - **Lazy Loading**: Embeddings generated on-demand when missing
+
+### Save Hook Behavior
+
+The package automatically generates embeddings when org-roam files are saved:
+
+**Chunking Disabled (default):**
+- `before-save-hook` calls `org-roam-semantic-generate-embedding`
+- Generates file-level embeddings stored in document header
+- Single embedding represents entire document content
+
+**Chunking Enabled:**
+- `before-save-hook` calls `org-roam-semantic-generate-chunks-for-file`
+- Processes all headings in the document
+- Content-rich sections (≥50 words): Get embeddings + IDs
+- Short sections (<50 words): Get ID-only property blocks
+- Enables fine-grained semantic search and future expansion
+
+**Safe Operation:**
+- Uses `before-save-hook` to avoid infinite loops
+- Never calls `save-buffer` from within save hooks
+- Marks buffers as modified to trigger natural save cycle
 
 ## Development Prerequisites
 
