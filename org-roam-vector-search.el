@@ -1,5 +1,5 @@
 ;;; org-roam-vector-search.el --- Vector embeddings and AI assistance for org-roam -*- lexical-binding: t; -*-
-;;; Version: 1.2.0
+;;; Version: 1.3.0
 ;;;
 ;;; Commentary:
 ;; This package adds vector embedding support and direct AI integration to org-roam.
@@ -17,7 +17,7 @@
 
 ;;; Version
 
-(defconst org-roam-semantic-version "1.2.0"
+(defconst org-roam-semantic-version "1.3.0"
   "Version of the org-roam-semantic package suite.")
 
 (defun org-roam-semantic-version ()
@@ -89,13 +89,22 @@ Sections longer than this will be split into smaller chunks."
   :type 'integer
   :group 'org-roam-vector-search)
 
+(defcustom org-roam-semantic-similarity-cutoff 0.55
+  "Similarity cutoff threshold for related notes.
+Notes with similarity below this threshold will be excluded from results.
+Higher values (closer to 1.0) mean more similar notes only."
+  :type 'float
+  :group 'org-roam-vector-search)
+
 ;;; Utility Functions
 
-(defun org-roam-semantic-get-similar-data (query-text &optional limit chunk-level)
+(defun org-roam-semantic-get-similar-data (query-text &optional limit chunk-level cutoff)
   "Get similarity data programmatically.
 Returns list of (file similarity [position heading-text]) tuples.
-If CHUNK-LEVEL is non-nil and chunking is enabled, searches chunks instead of whole files."
+If CHUNK-LEVEL is non-nil and chunking is enabled, searches chunks instead of whole files.
+If CUTOFF is provided, filters results to only include similarities above that threshold."
   (let ((limit (or limit 10))
+        (cutoff (or cutoff 0.0))
         (similarities '()))
     ;; Generate embedding for query
     (let ((query-embedding (org-roam-ai-generate-embedding query-text)))
@@ -111,13 +120,13 @@ If CHUNK-LEVEL is non-nil and chunking is enabled, searches chunks instead of wh
                              (heading-text (nth 1 chunk))
                              (embedding (nth 2 chunk))
                              (similarity (org-roam-semantic--cosine-similarity query-embedding embedding)))
-                        (when similarity
+                        (when (and similarity (>= similarity cutoff))
                           (push (list file similarity position heading-text) similarities)))))
                 ;; Search file-level embeddings
                 (let ((note-embedding (org-roam-semantic--get-embedding file)))
                   (when note-embedding
                     (let ((similarity (org-roam-semantic--cosine-similarity query-embedding note-embedding)))
-                      (when similarity
+                      (when (and similarity (>= similarity cutoff))
                         (push (list file similarity) similarities)))))))
             ;; Sort by similarity and take top results
             (setq similarities (sort similarities (lambda (a b) (> (cadr a) (cadr b)))))
@@ -771,8 +780,10 @@ If CHUNK-LEVEL is non-nil, searches chunks instead of whole files."
   (org-roam-semantic-find-and-insert concept))
 
 ;;;###autoload
-(defun org-roam-semantic-insert-similar (&optional limit)
-  "Find notes similar to current note and insert org-roam links at point."
+(defun org-roam-semantic-insert-similar (&optional cutoff)
+  "Find notes similar to current note and insert org-roam links at point.
+Uses similarity cutoff from `org-roam-semantic-similarity-cutoff' or CUTOFF if provided.
+All notes above the similarity threshold will be inserted."
   (interactive "P")
   (if (not (and (derived-mode-p 'org-mode) (org-roam-file-p)))
       (message "This function only works in org-roam files")
@@ -781,19 +792,17 @@ If CHUNK-LEVEL is non-nil, searches chunks instead of whole files."
                      (file-name-sans-extension (file-name-nondirectory current-file))))
            (content (org-roam-semantic--get-content current-file))
            (query-text (or content title))
-           (limit (or limit 5))
-           (similarities (org-roam-semantic-get-similar-data query-text (1+ limit)))) ; Get one extra to exclude current note
+           (cutoff (or cutoff org-roam-semantic-similarity-cutoff))
+           (similarities (org-roam-semantic-get-similar-data query-text nil nil cutoff))) ; Use cutoff, no limit
 
       ;; Filter out the current note from results
       (setq similarities (seq-remove (lambda (result)
                                       (string= (car result) current-file))
                                     similarities))
-      ;; Take the requested number after filtering
-      (setq similarities (seq-take similarities limit))
 
       (if similarities
           (progn
-            (insert (format "\n** Related Notes\n"))
+            (insert (format "\n** Related Notes (similarity >= %.2f)\n" cutoff))
             (dolist (result similarities)
               (let* ((file (car result))
                      (similarity (cadr result))
@@ -803,8 +812,8 @@ If CHUNK-LEVEL is non-nil, searches chunks instead of whole files."
                     (insert (format "- [[id:%s][%s]] (%.3f)\n" node-id title similarity))
                   (insert (format "- [[file:%s][%s]] (%.3f)\n" file title similarity)))))
             (insert "\n")
-            (message "Inserted %d similar note links" (length similarities)))
-        (message "No similar notes found")))))
+            (message "Inserted %d similar note links (similarity >= %.2f)" (length similarities) cutoff))
+        (message "No similar notes found above similarity threshold %.2f" cutoff)))))
 
 ;;; Status and Maintenance Functions
 
