@@ -83,6 +83,11 @@ git clone https://github.com/dcruver/org-roam-semantic.git
 
 ;; Embedding dimensions - must match your model (default: 768)
 (setq org-roam-semantic-embedding-dimensions 768)
+
+;; Similarity cutoff for related notes (default: 0.55)
+;; Higher values = more similar notes only
+;; Lower values = more loosely related notes
+(setq org-roam-semantic-similarity-cutoff 0.55)
 ```
 
 ## Usage
@@ -100,10 +105,12 @@ Generate embeddings for all org-roam notes that don't already have them. Shows p
 
 Search for notes similar to a concept and display results in a clickable buffer. Enter a search term and get a ranked list of similar notes with similarity scores.
 
-#### `org-roam-semantic-insert-similar`  
+#### `org-roam-semantic-insert-similar`
 **Keybinding:** `C-c v i`
 
-Find notes similar to the current note and insert org-roam links at point. Useful for building connections between related notes.
+Find notes similar to the current note and insert org-roam links at point. Uses the configurable similarity cutoff (`org-roam-semantic-similarity-cutoff`) to filter results - only notes above the threshold are inserted. You can also provide a custom cutoff with a prefix argument.
+
+**Changed in v1.2.0:** Now inserts ALL notes above the similarity threshold instead of just 5 notes.
 
 #### `org-roam-semantic-insert-related`
 **Keybinding:** `C-c v r`
@@ -121,7 +128,7 @@ Debug the embedding for a specific file. Shows embedding dimensions and first fe
 The following key bindings are set up automatically:
 
 - `C-c v s` - Search for similar notes by concept
-- `C-c v i` - Insert similar notes to current note  
+- `C-c v i` - Insert similar notes to current note (uses similarity cutoff)
 - `C-c v r` - Insert notes related to a concept
 
 ## Workflow
@@ -155,6 +162,12 @@ Embeddings are automatically generated and updated when you save org-roam files,
 - Try different search terms (more specific or more general)
 - Consider using a different embedding model
 - Ensure your notes have sufficient content for meaningful embeddings
+- Adjust the similarity cutoff: lower values include more loosely related notes
+
+### Too many/few related notes
+- Increase `org-roam-semantic-similarity-cutoff` to get fewer, more similar notes
+- Decrease the cutoff to get more loosely related notes
+- Use a prefix argument with `C-c v i` to temporarily override the cutoff
 
 ## Integration
 
@@ -168,6 +181,12 @@ This package provides functions used by other org-roam extensions and can be int
 
 ### `org-roam-semantic-get-similar-data`
 Returns similarity data as a list of `(file similarity-score)` pairs, suitable for programmatic use by other functions or external tools.
+
+**Parameters:**
+- `query-text` - Text to search for
+- `limit` - Maximum number of results (optional)
+- `chunk-level` - Search chunks instead of files (optional)
+- `cutoff` - Similarity threshold filter (optional)
 
 ## License
 

@@ -104,6 +104,12 @@ M-x org-roam-semantic-version       ; Current version info
 - `org-roam-semantic-min-chunk-size` - Minimum words for chunk embedding (default: 100)
 - `org-roam-semantic-max-chunk-size` - Maximum words per chunk (default: 1000)
 
+### Similarity Settings
+- `org-roam-semantic-similarity-cutoff` - Threshold for related notes (default: 0.55)
+  - Higher values (closer to 1.0) return only very similar notes
+  - Lower values return more loosely related notes
+  - Used by `org-roam-semantic-insert-similar` to filter results
+
 ### AI Assistant Settings
 - `org-roam-ai-default-model` - Default AI model
 - `org-roam-ai-context-limit` - Number of similar notes to use as context (default: 3)
@@ -115,7 +121,7 @@ The package uses a hierarchical key binding system:
 
 - `C-c v` prefix - Vector search functions
   - `C-c v s` - Search notes by concept
-  - `C-c v i` - Insert similar notes to current note
+  - `C-c v i` - Insert similar notes to current note (uses similarity cutoff)
   - `C-c v r` - Insert notes related to a concept
   - `C-c v c` - Search chunks by concept (requires chunking enabled)
   - `C-c v g` - Generate chunks for current file
@@ -223,6 +229,6 @@ The chunking system includes detailed debug logging. When experiencing issues:
 
 ## Version Information
 
-Current version: 1.2.0
+Current version: 1.3.0
 - Check version: `M-x org-roam-semantic-version`
 - Both modules share version numbering
