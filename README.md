@@ -1,3 +1,10 @@
+> ⚠️ **DEPRECATED**: This repository has been merged into [org-roam-second-brain](https://github.com/dcruver/org-roam-second-brain).
+> 
+> The semantic search functionality (`org-roam-vector-search.el`) is now part of org-roam-second-brain.
+> Please use that repository for the latest updates.
+
+---
+
 # org-roam-semantic
 
 AI-powered semantic search and intelligent assistance for org-roam.
